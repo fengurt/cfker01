@@ -1,0 +1,76 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cfker01",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-23",
+  "compatibility_flags": ["nodejs_compat_v2"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "APP_NAME": "cfker01",
+    "ENVIRONMENT": "development"
+  },
+  "d1_databases": [
+    {
+      "binding": "MGMT_DB",
+      "database_name": "cfker01-mgmt",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "MGMT_KV",
+      "id": "00000000000000000000000000000000"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 */6 * * *"]
+  },
+  "env": {
+    "staging": {
+      "name": "cfker01-staging",
+      "vars": {
+        "APP_NAME": "cfker01",
+        "ENVIRONMENT": "staging"
+      },
+      "d1_databases": [
+        {
+          "binding": "MGMT_DB",
+          "database_name": "cfker01-mgmt-staging",
+          "database_id": "00000000-0000-0000-0000-000000000001",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "MGMT_KV",
+          "id": "00000000000000000000000000000001"
+        }
+      ]
+    },
+    "production": {
+      "name": "cfker01-production",
+      "vars": {
+        "APP_NAME": "cfker01",
+        "ENVIRONMENT": "production"
+      },
+      "d1_databases": [
+        {
+          "binding": "MGMT_DB",
+          "database_name": "cfker01-mgmt-production",
+          "database_id": "00000000-0000-0000-0000-000000000002",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "MGMT_KV",
+          "id": "00000000000000000000000000000002"
+        }
+      ]
+    }
+  }
+}
