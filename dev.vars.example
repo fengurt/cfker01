@@ -1,0 +1,2 @@
+# Copy to .dev.vars for local development (never commit secrets)
+ADMIN_TOKEN=change-me-local-admin-token
