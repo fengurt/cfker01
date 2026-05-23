@@ -1,0 +1,27 @@
+{
+  "name": "cfker01",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare management worker and ops toolkit (cfker)",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production",
+    "check": "wrangler deploy --dry-run && tsc --noEmit",
+    "types": "wrangler types",
+    "tail": "wrangler tail",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "d1:migrate:local": "wrangler d1 migrations apply cfker01-mgmt --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply cfker01-mgmt --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.19",
+    "@types/node": "^25.9.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2",
+    "wrangler": "^4.86.0"
+  }
+}
