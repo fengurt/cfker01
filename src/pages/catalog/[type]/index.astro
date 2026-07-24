@@ -1,0 +1,9 @@
+---
+import { getCollection } from "astro:content";
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+import EntryList from "../../../components/EntryList.astro";
+export function getStaticPaths() { return ["app","skill","agent"].map((type) => ({ params: { type } })); }
+const { type } = Astro.params;
+const entries = (await getCollection("entries")).filter((entry) => entry.data.types.includes(type as never)).sort((a,b) => a.data.title.localeCompare(b.data.title));
+---
+<BaseLayout title={`${type}s`} description={`Reviewed AI ${type}s with source and ownership metadata.`}><section class="page-intro shell"><p class="eyebrow">Category</p><h1>{type}s</h1><p>{entries.length} records classified as {type}s. Multi-type projects remain canonical.</p></section><section class="section shell"><EntryList entries={entries} /></section></BaseLayout>

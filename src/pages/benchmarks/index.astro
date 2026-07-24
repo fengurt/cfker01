@@ -1,0 +1,7 @@
+---
+import { getCollection } from "astro:content";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import EntryList from "../../components/EntryList.astro";
+const entries = (await getCollection("entries")).filter((entry) => entry.data.types.includes("benchmark"));
+---
+<BaseLayout title="Benchmarks" description="Benchmark projects and published evidence with methodology links and limitations."><section class="page-intro shell"><p class="eyebrow">Benchmark evidence</p><h1>Results need context.</h1><p>This catalog links methodologies, evaluated targets, metrics, and limitations. It does not invent a universal ranking.</p></section><section class="section shell"><EntryList entries={entries} /></section></BaseLayout>

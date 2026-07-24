@@ -1,0 +1,10 @@
+{
+  "docker": {
+    "host": "opchom",
+    "serverId": "db6ae7af-e560-47a4-a3e0-5d51e81f7eb8"
+  },
+  "tencentRegions": ["ap-guangzhou", "ap-nanjing", "ap-singapore"],
+  "tencentServerIds": {
+    "lhins-mdeh2165": "db6ae7af-e560-47a4-a3e0-5d51e81f7eb8"
+  }
+}

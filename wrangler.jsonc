@@ -8,9 +8,16 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/api/*", "/admin/*", "/v1/*", "/mcp", "/.well-known/mcp", "/health", "/status"]
+  },
   "vars": {
     "APP_NAME": "cfker01",
-    "ENVIRONMENT": "development"
+    "ENVIRONMENT": "development",
+    "STATUS_PAGE_TITLE": "cfker01 cloud status"
   },
   "d1_databases": [
     {
@@ -27,14 +34,15 @@
     }
   ],
   "triggers": {
-    "crons": ["0 */6 * * *"]
+    "crons": ["*/30 * * * *"]
   },
   "env": {
     "staging": {
       "name": "cfker01-staging",
       "vars": {
         "APP_NAME": "cfker01",
-        "ENVIRONMENT": "staging"
+        "ENVIRONMENT": "staging",
+        "STATUS_PAGE_TITLE": "cfker01 cloud status (staging)"
       },
       "d1_databases": [
         {
@@ -55,7 +63,8 @@
       "name": "cfker01-production",
       "vars": {
         "APP_NAME": "cfker01",
-        "ENVIRONMENT": "production"
+        "ENVIRONMENT": "production",
+        "STATUS_PAGE_TITLE": "cfker01 cloud status"
       },
       "d1_databases": [
         {

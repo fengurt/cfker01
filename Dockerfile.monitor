@@ -1,0 +1,9 @@
+ARG TARGETPLATFORM=linux/amd64
+FROM --platform=$TARGETPLATFORM node:22-bookworm-slim
+ENV NODE_ENV=production
+WORKDIR /app
+COPY scripts/monitor-loop.mjs ./scripts/monitor-loop.mjs
+COPY scripts/lib/dns-probe.mjs ./scripts/lib/dns-probe.mjs
+RUN mkdir -p /data/monitor && chown -R node:node /app /data/monitor
+USER node
+ENTRYPOINT ["node", "./scripts/monitor-loop.mjs"]

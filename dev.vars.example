@@ -1,2 +1,19 @@
 # Copy to .dev.vars for local development (never commit secrets)
 ADMIN_TOKEN=change-me-local-admin-token
+API_KEY_SALT=change-me-local-salt-min-32-chars-long
+CONTENT_ENCRYPTION_KEY=base64-encoded-32-byte-key
+CONTENT_KEY_VERSION=v1
+INTERNAL_MONITOR_TOKEN=change-me-separate-monitor-token
+LOCAL_SCAN_ROOT=/Users/af/cpro01
+# Optional collectors (any subset is fine; missing creds simply mark source as error)
+# CLOUDFLARE_API_TOKEN=
+# CLOUDFLARE_ACCOUNT_ID=
+# TENCENT_SECRET_ID=
+# TENCENT_SECRET_KEY=
+# OPENAI_API_KEY=
+# OPENAI_ADMIN_KEY=
+# MINIMAX_API_KEY=
+# PERPLEXITY_API_KEY=
+# X_BEARER_TOKEN=
+# GITHUB_TOKEN=
+# SEMANTIC_SCHOLAR_API_KEY=

@@ -1,0 +1,12 @@
+.git
+.github
+.wrangler
+.astro
+dist
+node_modules
+.dev.vars
+.env
+.env.*
+*.log
+.DS_Store
+factsheet

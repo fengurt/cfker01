@@ -1,0 +1,7 @@
+---
+import { getCollection } from "astro:content";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import EntryList from "../../components/EntryList.astro";
+const entries = (await getCollection("entries")).sort((a,b) => Number(b.data.featured)-Number(a.data.featured) || a.data.title.localeCompare(b.data.title));
+---
+<BaseLayout title="Catalog" description="Search and filter reviewed AI apps, skills, agents, and benchmarks."><section class="page-intro shell"><p class="eyebrow">Catalog</p><h1>One record. Every relevant type.</h1><p>Search {entries.length} reviewed records without duplicating projects across categories.</p></section><section class="section shell"><EntryList entries={entries} interactive /></section></BaseLayout>

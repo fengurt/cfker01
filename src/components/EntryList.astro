@@ -1,0 +1,69 @@
+---
+interface Entry {
+  id: string;
+  data: {
+    title: string;
+    summary: string;
+    types: string[];
+    tags: string[];
+    maturity: string;
+    ownership: string;
+    featured?: boolean;
+  };
+}
+interface Props { entries: Entry[]; interactive?: boolean; }
+const { entries, interactive = false } = Astro.props;
+const tags = [...new Set(entries.flatMap((entry) => entry.data.tags))].sort();
+---
+{interactive && (
+  <form class="filters" id="catalog-filters" role="search">
+    <label>Search <input name="q" type="search" placeholder="Name, purpose, or tag" autocomplete="off" /></label>
+    <label>Type <select name="type"><option value="">All types</option><option>app</option><option>skill</option><option>agent</option><option>benchmark</option></select></label>
+    <label>Ownership <select name="ownership"><option value="">All ownership</option><option value="first_party">Our work</option><option value="third_party">Third party</option></select></label>
+    <label>Tag <select name="tag"><option value="">All tags</option>{tags.map((tag) => <option value={tag}>{tag}</option>)}</select></label>
+  </form>
+)}
+<p class="results-count" id="results-count" aria-live="polite">{entries.length} records</p>
+<div class="entry-list" id="entry-list">
+  {entries.map((entry) => (
+    <article class="entry-row" data-search={`${entry.data.title} ${entry.data.summary} ${entry.data.tags.join(" ")}`.toLowerCase()} data-types={entry.data.types.join(" ")} data-ownership={entry.data.ownership} data-tags={entry.data.tags.join(" ")}>
+      <div class="entry-main">
+        <p class="type-line">{entry.data.types.join(" + ")}</p>
+        <h2><a href={`/catalog/${entry.id}/`}>{entry.data.title}</a></h2>
+        <p>{entry.data.summary}</p>
+      </div>
+      <div class="entry-meta"><span>{entry.data.maturity}</span><span>{entry.data.ownership === "first_party" ? "Our work" : entry.data.tags.slice(0, 2).join(", ")}</span></div>
+    </article>
+  ))}
+</div>
+<div class="empty-state" id="empty-state" hidden><h2>No matching records</h2><p>Clear one or more filters to broaden the catalog.</p></div>
+{interactive && <script>
+  const form = document.querySelector<HTMLFormElement>("#catalog-filters");
+  const rows = Array.from(document.querySelectorAll<HTMLElement>(".entry-row"));
+  const count = document.querySelector<HTMLElement>("#results-count");
+  const empty = document.querySelector<HTMLElement>("#empty-state");
+  const apply = () => {
+    if (!form) return;
+    const data = new FormData(form);
+    const q = String(data.get("q") || "").trim().toLowerCase();
+    const type = String(data.get("type") || "");
+    const ownership = String(data.get("ownership") || "");
+    const tag = String(data.get("tag") || "");
+    let visible = 0;
+    rows.forEach((row) => {
+      const show = (!q || row.dataset.search?.includes(q)) && (!type || row.dataset.types?.split(" ").includes(type)) && (!ownership || row.dataset.ownership === ownership) && (!tag || row.dataset.tags?.split(" ").includes(tag));
+      row.hidden = !show;
+      if (show) visible += 1;
+    });
+    if (count) count.textContent = `${visible} ${visible === 1 ? "record" : "records"}`;
+    if (empty) empty.hidden = visible !== 0;
+    const query = new URLSearchParams();
+    if (q) query.set("q", q); if (type) query.set("type", type); if (ownership) query.set("ownership", ownership); if (tag) query.set("tag", tag);
+    history.replaceState(null, "", query.size ? `?${query}` : location.pathname);
+  };
+  if (form) {
+    const initial = new URLSearchParams(location.search);
+    for (const [name, value] of initial) { const control = form.elements.namedItem(name); if (control && "value" in control) control.value = value; }
+    form.addEventListener("input", apply); apply();
+  }
+</script>}

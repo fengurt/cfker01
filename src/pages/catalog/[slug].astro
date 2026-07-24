@@ -1,0 +1,18 @@
+---
+import { getCollection } from "astro:content";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+export async function getStaticPaths() { const entries = await getCollection("entries"); return entries.map((entry) => ({ params: { slug: entry.id }, props: { entry } })); }
+const { entry } = Astro.props;
+const all = await getCollection("entries");
+const related = all.filter((candidate) => candidate.id !== entry.id && candidate.data.tags.some((tag: string) => entry.data.tags.includes(tag))).slice(0, 4);
+const data = entry.data;
+const schema = {"@context":"https://schema.org","@type":"SoftwareApplication","name":data.title,"description":data.summary,"url":Astro.url.href,"codeRepository":data.sourceUrl};
+---
+<BaseLayout title={data.title} description={data.summary} schema={schema}>
+  <article class="detail shell">
+    <header><p class="eyebrow">{data.types.join(" + ")}</p><h1>{data.title}</h1><p class="lede">{data.summary}</p><div class="actions"><a class="button" href={data.homepage || data.sourceUrl}>Visit project</a><a class="text-link" href={data.sourceUrl}>View source</a></div></header>
+    <div class="detail-grid"><div><section><h2>What it is</h2><p>{data.description}</p></section>{data.showcase && <><section><h2>The problem</h2><p>{data.showcase.problem}</p></section><section><h2>Architecture</h2><p>{data.showcase.architecture}</p><ul>{data.showcase.outcomes.map((item: string) => <li>{item}</li>)}</ul></section></>}{data.benchmarkEvidence.length > 0 && <section><h2>Benchmark evidence</h2>{data.benchmarkEvidence.map((evidence: any) => <div class="evidence"><h3>{evidence.evaluator}</h3><p>Evaluated target: {evidence.evaluatedTarget}</p><dl>{evidence.metrics.map((metric: any) => <><dt>{metric.name}</dt><dd>{metric.value}</dd></>)}</dl><p class="note">Limitation: {evidence.limitations}</p><a href={evidence.methodologyUrl}>Methodology</a> <a href={evidence.resultUrl}>Results</a></div>)}</section>}</div>
+    <aside><h2>Record</h2><dl class="metadata"><dt>Ownership</dt><dd>{data.ownership === "first_party" ? "Our work" : "Third party"}</dd><dt>Maturity</dt><dd>{data.maturity}</dd><dt>Maintainers</dt><dd>{data.maintainers.join(", ")}</dd><dt>Platforms</dt><dd>{data.platforms.join(", ") || "Not specified"}</dd><dt>Languages</dt><dd>{data.languages.join(", ") || "Not specified"}</dd><dt>License</dt><dd>{data.license || "See project"}</dd><dt>Last reviewed</dt><dd>{data.reviewedAt.toISOString().slice(0,10)}</dd></dl><h2>Tags</h2><p>{data.tags.join(", ")}</p><h2>Provenance</h2><p>Reviewed by {data.provenance.reviewer}.</p>{data.provenance.sources.map((source: string) => <a class="source-link" href={source}>{new URL(source).hostname}</a>)}</aside></div>
+  </article>
+  {related.length > 0 && <section class="section shell"><h2>Related records</h2><div class="related-grid">{related.map((item) => <a href={`/catalog/${item.id}/`}><strong>{item.data.title}</strong><span>{item.data.summary}</span></a>)}</div></section>}
+</BaseLayout>

@@ -6,7 +6,7 @@ export async function handleAdmin(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  const authError = requireAdminToken(request, env);
+  const authError = await requireAdminToken(request, env);
   if (authError) {
     return authError;
   }

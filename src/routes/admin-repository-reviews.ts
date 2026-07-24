@@ -1,0 +1,43 @@
+import { isValidRequestOrigin, requireAdminToken } from "../lib/auth";
+import { safeReviewPayload } from "../lib/repository-review";
+
+export async function handleAdminRepositoryReviews(request:Request,env:Env,ctx:ExecutionContext){
+  const auth=await requireAdminToken(request,env);if(auth)return auth;
+  if(!["GET","HEAD"].includes(request.method)&&request.headers.has("Cookie")&&!isValidRequestOrigin(request))return json({error:"invalid_origin"},403);
+  const url=new URL(request.url),parts=url.pathname.split("/").filter(Boolean),action=parts[2],id=parts[3];
+  if(!action&&request.method==="GET")return summary(env);
+  if(action==="snapshots"&&request.method==="POST")return importSnapshot(request,env,ctx);
+  if(action==="projects"&&id&&request.method==="GET")return projectReview(env,id);
+  if(action==="candidates"&&request.method==="GET")return candidates(env,url);
+  if(action==="candidates"&&id&&request.method==="PATCH")return reviewCandidate(request,env,id,ctx);
+  if(action==="runs"&&request.method==="POST")return createRun(request,env,ctx);
+  return json({error:"not_found"},404);
+}
+
+async function summary(env:Env){
+  const [snapshots,reviews,pending,runs]=await Promise.all([
+    env.MGMT_DB.prepare(`SELECT COUNT(*) count,SUM(CASE WHEN dirty=1 THEN 1 ELSE 0 END) dirty,SUM(CASE WHEN repository_url IS NULL THEN 1 ELSE 0 END) missing_remote FROM repository_snapshots`).first(),
+    env.MGMT_DB.prepare(`SELECT COUNT(*) count,SUM(input_tokens) input_tokens,SUM(output_tokens) output_tokens,SUM(cache_hit) cache_hits FROM repository_reviews`).first(),
+    env.MGMT_DB.prepare(`SELECT COUNT(*) count FROM repository_review_candidates WHERE status='pending'`).first(),
+    env.MGMT_DB.prepare(`SELECT * FROM repository_scan_runs ORDER BY started_at DESC LIMIT 10`).all()
+  ]);
+  return json({data:{snapshots,reviews,pendingCandidates:Number((pending as any)?.count??0),runs:runs.results??[]}});
+}
+
+async function importSnapshot(request:Request,env:Env,ctx:ExecutionContext){
+  const body=await request.json().catch(()=>null) as any;if(!safeReviewPayload(body))return json({error:"invalid_snapshot"},400);
+  const now=new Date().toISOString(),id=String(body.id||crypto.randomUUID());
+  const existing=await env.MGMT_DB.prepare(`SELECT id,fingerprint FROM repository_snapshots WHERE canonical_key=?1`).bind(body.canonicalKey).first<{id:string;fingerprint:string}>();
+  const cacheHit=existing?.fingerprint===body.fingerprint;
+  if(body.projectId){const project=await env.MGMT_DB.prepare(`SELECT id FROM catalog_projects WHERE id=?1`).bind(body.projectId).first();if(!project)body.projectId=null;}
+  await env.MGMT_DB.prepare(`INSERT INTO repository_snapshots(id,project_id,canonical_key,github_owner,github_repo,repository_url,local_paths,head_sha,branch,dirty,ahead,behind,default_branch,pushed_at,visibility,archived,fork,ci_status,release_name,topics,fingerprint,dossier,dossier_bytes,github_metadata,scan_evidence,last_scanned_at,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?26,?26) ON CONFLICT(canonical_key) DO UPDATE SET project_id=COALESCE(excluded.project_id,repository_snapshots.project_id),repository_url=excluded.repository_url,local_paths=excluded.local_paths,head_sha=excluded.head_sha,branch=excluded.branch,dirty=excluded.dirty,ahead=excluded.ahead,behind=excluded.behind,default_branch=excluded.default_branch,pushed_at=excluded.pushed_at,visibility=excluded.visibility,archived=excluded.archived,fork=excluded.fork,ci_status=excluded.ci_status,release_name=excluded.release_name,topics=excluded.topics,fingerprint=excluded.fingerprint,dossier=excluded.dossier,dossier_bytes=excluded.dossier_bytes,github_metadata=excluded.github_metadata,scan_evidence=excluded.scan_evidence,last_scanned_at=excluded.last_scanned_at,updated_at=excluded.updated_at`).bind(id,body.projectId??null,body.canonicalKey,body.githubOwner??null,body.githubRepo??null,body.repositoryUrl??null,JSON.stringify(body.localPaths??[]),body.headSha??null,body.branch??null,body.dirty?1:0,body.ahead??null,body.behind??null,body.defaultBranch??null,body.pushedAt??null,body.visibility??null,body.archived?1:0,body.fork?1:0,body.ciStatus??null,body.releaseName??null,JSON.stringify(body.topics??[]),body.fingerprint,body.dossier,body.dossier.length,JSON.stringify(body.githubMetadata??{}),JSON.stringify(body.evidence??[]),now).run();
+  if(!cacheHit)await env.MGMT_DB.prepare(`INSERT INTO repository_reviews(id,snapshot_id,project_id,fingerprint,review_version,status,confidence,summary,suggested_description,suggested_types,suggested_tags,maturity,recommendations,evidence,reviewed_at) VALUES(?1,(SELECT id FROM repository_snapshots WHERE canonical_key=?2),?3,?4,'dossier-v1','needs_deep_review',?5,?6,?7,?8,?9,?10,?11,?12,?13)`).bind(crypto.randomUUID(),body.canonicalKey,body.projectId??null,body.fingerprint,Number(body.confidence??0.7),body.summary??null,body.suggestedDescription??null,JSON.stringify(body.suggestedTypes??[]),JSON.stringify(body.suggestedTags??[]),body.maturity??"unknown",JSON.stringify(body.recommendations??[]),JSON.stringify(body.evidence??[]),now).run();
+  if(!cacheHit&&body.projectId&&body.suggestedDescription){const confidence=Number(body.confidence??0);const current=await env.MGMT_DB.prepare(`SELECT description FROM catalog_projects WHERE id=?1`).bind(body.projectId).first<{description:string|null}>();if(confidence>=0.85&&!current?.description?.trim())await env.MGMT_DB.prepare(`UPDATE catalog_projects SET description=?1,update_provenance=?2,updated_at=?3 WHERE id=?4 AND (description IS NULL OR TRIM(description)='')`).bind(String(body.suggestedDescription),JSON.stringify({source:"repository_dossier",fingerprint:body.fingerprint,confidence}),now,body.projectId).run();else if(current?.description&&current.description!==body.suggestedDescription)await env.MGMT_DB.prepare(`INSERT INTO repository_review_candidates(id,project_id,snapshot_id,field_name,proposed_value,current_value,confidence,reason,status,created_at) VALUES(?1,?2,(SELECT id FROM repository_snapshots WHERE canonical_key=?3),'description',?4,?5,?6,'generated_description_conflicts_with_manual','pending',?7)`).bind(crypto.randomUUID(),body.projectId,body.canonicalKey,String(body.suggestedDescription),current.description,confidence,now).run();}
+  ctx.waitUntil(audit(env,"repository.snapshot_imported",{canonicalKey:body.canonicalKey,cacheHit}));return json({ok:true,cacheHit,status:cacheHit?"unchanged":"needs_deep_review"});
+}
+
+async function projectReview(env:Env,id:string){const snapshot=await env.MGMT_DB.prepare(`SELECT * FROM repository_snapshots WHERE project_id=?1 ORDER BY updated_at DESC LIMIT 1`).bind(id).first();if(!snapshot)return json({error:"not_found"},404);const reviews=await env.MGMT_DB.prepare(`SELECT * FROM repository_reviews WHERE snapshot_id=?1 ORDER BY reviewed_at DESC LIMIT 20`).bind((snapshot as any).id).all();return json({data:{snapshot,reviews:reviews.results??[]}});}
+async function candidates(env:Env,url:URL){const status=url.searchParams.get("status")||"pending";const rows=await env.MGMT_DB.prepare(`SELECT * FROM repository_review_candidates WHERE status=?1 ORDER BY created_at DESC LIMIT 200`).bind(status).all();return json({data:rows.results??[]});}
+async function reviewCandidate(request:Request,env:Env,id:string,ctx:ExecutionContext){const body=await request.json().catch(()=>({})) as any,status=body.status;if(!["approved","rejected"].includes(status))return json({error:"invalid_status"},400);const now=new Date().toISOString();await env.MGMT_DB.prepare(`UPDATE repository_review_candidates SET status=?1,reviewed_at=?2,reviewed_by='system_admin' WHERE id=?3`).bind(status,now,id).run();ctx.waitUntil(audit(env,"repository.candidate_reviewed",{id,status}));return json({ok:true});}
+async function createRun(request:Request,env:Env,ctx:ExecutionContext){const body=await request.json().catch(()=>({})) as any,mode=body.mode==="full"?"full":"incremental",id=crypto.randomUUID(),now=new Date().toISOString();await env.MGMT_DB.prepare(`INSERT INTO repository_scan_runs(id,mode,status,started_at) VALUES(?1,?2,'awaiting_cli',?3)`).bind(id,mode,now).run();ctx.waitUntil(audit(env,"repository.scan_requested",{id,mode}));return json({ok:true,id,mode,status:"awaiting_cli",command:`npm run repos:audit -- --mode ${mode} --upload`},202);}
+function json(body:unknown,status=200){return Response.json(body,{status,headers:{"Cache-Control":"no-store"}});}function audit(env:Env,eventType:string,payload:unknown){return env.MGMT_DB.prepare(`INSERT INTO audit_events(event_type,payload,created_at) VALUES(?1,?2,?3)`).bind(eventType,JSON.stringify(payload),new Date().toISOString()).run();}

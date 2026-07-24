@@ -3,8 +3,14 @@ node_modules/
 .dev.vars
 .env
 .env.local
+.env.cloud
+.env.docker
+.env.1password
+.cos.yaml
 .cursor/
 dist/
+.astro/
+.cache/
 *.log
 .DS_Store
 worker-configuration.d.ts
