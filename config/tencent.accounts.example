@@ -1,0 +1,13 @@
+# Copy to the gitignored .env.cloud. Use exact op:// references for each account.
+TENCENT_ACCOUNT=primary
+TENCENT_REGION=ap-guangzhou
+TENCENT_ALLOW_LOCAL_CREDENTIAL_FILE=false
+
+OP_TENCENT_PRIMARY_SECRET_ID_REF=op://Personal/Exact Tencent Item/secret-id
+OP_TENCENT_PRIMARY_SECRET_KEY_REF=op://Personal/Exact Tencent Item/secret-key
+TENCENT_PRIMARY_APP_ID=0000000000
+
+# Switch TENCENT_ACCOUNT to secondary when needed.
+OP_TENCENT_SECONDARY_SECRET_ID_REF=op://Personal/Exact Secondary Tencent Item/secret-id
+OP_TENCENT_SECONDARY_SECRET_KEY_REF=op://Personal/Exact Secondary Tencent Item/secret-key
+TENCENT_SECONDARY_APP_ID=0000000000

@@ -1,0 +1,60 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title?: string;
+  description?: string;
+  canonical?: string;
+  image?: string;
+  schema?: Record<string, unknown>;
+}
+
+const {
+  title = "TableAI Catalog",
+  description = "A reviewed catalog of AI apps, skills, agents, benchmarks, and technical writing.",
+  canonical = Astro.url.pathname,
+  image = "/og-default.svg",
+  schema,
+} = Astro.props;
+const site = Astro.site ?? new URL(Astro.url.origin);
+const canonicalUrl = new URL(canonical, site);
+const imageUrl = new URL(image, site);
+const pageTitle = title === "TableAI Catalog" ? title : `${title} | TableAI Catalog`;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="canonical" href={canonicalUrl} />
+    <link rel="alternate" type="application/rss+xml" title="TableAI articles" href="/rss.xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:image" content={imageUrl} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <title>{pageTitle}</title>
+    {schema && <script is:inline type="application/ld+json" set:html={JSON.stringify(schema)} />}
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="TableAI Catalog home"><span class="brand-mark">T</span><span>TableAI Catalog</span></a>
+      <nav aria-label="Primary navigation">
+        <a href="/catalog/">Catalog</a>
+        <a href="/benchmarks/">Benchmarks</a>
+        <a href="/articles/">Articles</a>
+        <a href="/resources/">Resources</a>
+        <a href="/our-work/">Our work</a>
+      </nav>
+    </header>
+    <main id="main"><slot /></main>
+    <footer>
+      <p>Reviewed tools and evidence for people building with AI.</p>
+      <div><a href="/api/v1/catalog">Catalog API</a><a href="/api/v1/projects">Projects API</a><a href="/system-admin/">System admin</a><a href="/status">Operations status</a></div>
+    </footer>
+  </body>
+</html>

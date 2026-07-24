@@ -1,0 +1,4 @@
+[
+  {"id":"agent-builders","title":"Agent builder foundations","summary":"Frameworks and protocols for assembling tool-using agent systems.","entries":["openai-agents-sdk","langgraph","pydantic-ai","mcp-servers","skills"],"featured":true},
+  {"id":"evaluation-stack","title":"Evaluation stack","summary":"Benchmarks and frameworks for measuring model and agent behavior.","entries":["swe-bench","terminal-bench","inspect-ai","promptfoo","langfuse"],"featured":true}
+]

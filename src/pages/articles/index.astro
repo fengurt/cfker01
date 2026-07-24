@@ -1,0 +1,6 @@
+---
+import { getCollection } from "astro:content";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+const articles = (await getCollection("articles")).sort((a,b) => b.data.publishedAt.valueOf()-a.data.publishedAt.valueOf());
+---
+<BaseLayout title="Articles" description="Local technical writing and reviewed external publications about AI agents, benchmarks, and operations."><section class="page-intro shell"><p class="eyebrow">Articles</p><h1>Methods, systems, and source material.</h1><p>Original notes live beside reviewed external publications, each with a clear canonical source.</p></section><section class="article-list shell">{articles.map((article) => <article><div><p>{article.data.kind === "local" ? "TableAI article" : "External publication"}</p><time datetime={article.data.publishedAt.toISOString()}>{article.data.publishedAt.toISOString().slice(0,10)}</time></div><h2><a href={`/articles/${article.id}/`}>{article.data.title}</a></h2><p>{article.data.summary}</p></article>)}</section></BaseLayout>

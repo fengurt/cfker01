@@ -1,0 +1,184 @@
+services:
+  catalog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    platform: linux/amd64
+    image: tableai-catalog:local
+    restart: unless-stopped
+    ports:
+      - "${TABLEAI_BIND_ADDRESS:-127.0.0.1}:${TABLEAI_PORT:-8787}:8787"
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env.docker or the shell}
+      API_KEY_SALT: ${API_KEY_SALT:?Set API_KEY_SALT in .env.docker or the shell}
+      APP_NAME: ${APP_NAME:-tableai-catalog}
+      ENVIRONMENT: ${ENVIRONMENT:-self-hosted}
+      STATUS_PAGE_TITLE: ${STATUS_PAGE_TITLE:-TableAI catalog status}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      CONTENT_ENCRYPTION_KEY: ${CONTENT_ENCRYPTION_KEY:?Set CONTENT_ENCRYPTION_KEY in .env.docker or the shell}
+      CONTENT_KEY_VERSION: ${CONTENT_KEY_VERSION:-v1}
+      INTERNAL_MONITOR_TOKEN: ${INTERNAL_MONITOR_TOKEN:?Set INTERNAL_MONITOR_TOKEN in .env.docker or the shell}
+      LOCAL_SCAN_ROOT: ${LOCAL_SCAN_ROOT:-/Users/af/cpro01}
+    volumes:
+      - tableai_data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: ${TABLEAI_MEMORY_LIMIT:-1g}
+    cpus: ${TABLEAI_CPU_LIMIT:-1.5}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  docker-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.docker-proxy
+      platforms:
+        - linux/amd64
+    platform: linux/amd64
+    image: tableai-docker-readonly-proxy:local
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:2375/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  asset-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile.sync
+      platforms:
+        - linux/amd64
+    platform: linux/amd64
+    image: tableai-catalog-sync:local
+    restart: unless-stopped
+    depends_on:
+      catalog:
+        condition: service_healthy
+      docker-api:
+        condition: service_started
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env.docker or the shell}
+      SCANNER_KEY: ${SCANNER_KEY:-}
+      WORKER_URL: http://catalog:8787
+      SCANNER_POLL_SECONDS: ${SCANNER_POLL_SECONDS:-60}
+      SYNC_INTERVAL_SECONDS: ${SYNC_INTERVAL_SECONDS:-14400}
+      SYNC_TIMEOUT_SECONDS: ${SYNC_TIMEOUT_SECONDS:-2700}
+      ASSET_DISCOVERY_PROVIDERS: ${ASSET_DISCOVERY_PROVIDERS:-tencent,github,docker,cloudflare,godaddy}
+      ASSET_DISCOVERY_OUTPUT: /data/assets/latest.json
+      DOCKER_API_URL: http://docker-api:2375
+      DOCKER_SERVER_ID: ${DOCKER_SERVER_ID:-db6ae7af-e560-47a4-a3e0-5d51e81f7eb8}
+      NGINX_CONFIG_DIR: /nginx
+      TENCENT_SECRET_ID: ${TENCENT_SECRET_ID:-}
+      TENCENT_SECRET_KEY: ${TENCENT_SECRET_KEY:-}
+      TENCENT_REGION: ${TENCENT_REGION:-ap-guangzhou}
+      TENCENT_REGIONS: ${TENCENT_REGIONS:-ap-guangzhou,ap-nanjing,ap-singapore}
+      TENCENT_RUNTIME_DISCOVERY_ENABLED: ${TENCENT_RUNTIME_DISCOVERY_ENABLED:-true}
+      TENCENT_RUNTIME_COMMAND_TIMEOUT: ${TENCENT_RUNTIME_COMMAND_TIMEOUT:-45}
+      TENCENT_RUNTIME_POLL_TIMEOUT_MS: ${TENCENT_RUNTIME_POLL_TIMEOUT_MS:-120000}
+      DNS_PROBE_ENABLED: ${DNS_PROBE_ENABLED:-true}
+      DNS_PROBE_BATCH_SIZE: ${DNS_PROBE_BATCH_SIZE:-40}
+      DNS_PROBE_CONCURRENCY: ${DNS_PROBE_CONCURRENCY:-6}
+      DNS_PROBE_TIMEOUT_MS: ${DNS_PROBE_TIMEOUT_MS:-4000}
+      GH_TOKEN: ${GITHUB_TOKEN:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      GODADDY_API_TOKEN: ${GODADDY_API_TOKEN:-}
+      GODADDY_ACCOUNT_ID: ${GODADDY_ACCOUNT_ID:-default}
+    volumes:
+      - tableai_data:/data
+      - /etc/nginx/sites-enabled:/nginx:ro
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=0700
+      - /home/node:uid=1000,gid=1000,mode=0700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: ${TABLEAI_SYNC_MEMORY_LIMIT:-512m}
+    cpus: ${TABLEAI_SYNC_CPU_LIMIT:-0.75}
+    healthcheck:
+      test: ["CMD", "node", "-e", "const fs=require('fs');const age=Date.now()-fs.statSync('/data/assets/last-success').mtimeMs;process.exit(age<18000000?0:1)"]
+      interval: 5m
+      timeout: 10s
+      retries: 2
+      start_period: 2m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  health-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.monitor
+      platforms:
+        - linux/amd64
+    platform: linux/amd64
+    image: tableai-catalog-monitor:local
+    restart: unless-stopped
+    depends_on:
+      catalog:
+        condition: service_healthy
+    environment:
+      WORKER_URL: http://catalog:8787
+      INTERNAL_MONITOR_TOKEN: ${INTERNAL_MONITOR_TOKEN:?Set INTERNAL_MONITOR_TOKEN in .env.docker or the shell}
+      MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-300}
+      MONITOR_TIMEOUT_MS: ${MONITOR_TIMEOUT_MS:-5000}
+      MONITOR_CONCURRENCY: ${MONITOR_CONCURRENCY:-6}
+    volumes:
+      - tableai_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=0700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "node", "-e", "const fs=require('fs');const age=Date.now()-fs.statSync('/data/monitor/last-success').mtimeMs;process.exit(age<900000?0:1)"]
+      interval: 2m
+      timeout: 10s
+      retries: 2
+      start_period: 2m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  tableai_data:

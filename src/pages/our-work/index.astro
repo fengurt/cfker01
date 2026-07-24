@@ -1,0 +1,6 @@
+---
+import { getCollection } from "astro:content";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+const entries = (await getCollection("entries")).filter((entry) => entry.data.ownership === "first_party");
+---
+<BaseLayout title="Our work" description="First-party applications and agent infrastructure developed by TableAI."><section class="page-intro shell"><p class="eyebrow">Our work</p><h1>Built here, documented openly.</h1><p>First-party projects get deeper architecture and outcome notes while remaining comparable with the wider catalog.</p></section><section class="showcase shell">{entries.map((entry, index) => <article><div class="showcase-number">0{index+1}</div><div><p>{entry.data.types.join(" + ")}</p><h2>{entry.data.title}</h2><span>{entry.data.summary}</span><h3>Architecture</h3><p>{entry.data.showcase?.architecture}</p><ul>{entry.data.showcase?.outcomes.map((outcome) => <li>{outcome}</li>)}</ul><a class="text-link" href={`/catalog/${entry.id}/`}>View catalog record</a></div></article>)}</section></BaseLayout>

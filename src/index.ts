@@ -1,5 +1,8 @@
 import { handleRequest } from "./router";
 import { logEvent } from "./lib/logger";
+import { syncAll } from "./lib/sync";
+import { runResourceOperations } from "./lib/resource-operations";
+import { ensurePeriodicResourceSnapshot } from "./lib/resource-snapshot";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -9,6 +12,7 @@ export default {
       logEvent("error", "unhandled_exception", {
         path: new URL(request.url).pathname,
         message: error instanceof Error ? error.message : "unknown",
+        deployVersion: env.DEPLOY_VERSION ?? "unknown",
       });
       return Response.json({ error: "internal_error" }, { status: 500 });
     }
@@ -16,6 +20,9 @@ export default {
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(recordCronHeartbeat(env, event.cron));
+    ctx.waitUntil(runSyncSweep(env));
+    ctx.waitUntil(runResourceOperations(env));
+    ctx.waitUntil(ensurePeriodicResourceSnapshot(env));
   },
 };
 
@@ -34,4 +41,14 @@ async function recordCronHeartbeat(env: Env, cron: string): Promise<void> {
   )
     .bind("cron_heartbeat", JSON.stringify({ cron, timestamp }), timestamp)
     .run();
+}
+
+async function runSyncSweep(env: Env): Promise<void> {
+  const started = Date.now();
+  const results = await syncAll(env);
+  logEvent("info", "sync_sweep.complete", {
+    durationMs: Date.now() - started,
+    okCount: results.filter((r) => r.ok).length,
+    errorCount: results.filter((r) => !r.ok).length,
+  });
 }

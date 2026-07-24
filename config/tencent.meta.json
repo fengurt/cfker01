@@ -1,0 +1,26 @@
+{
+  "account": {
+    "subAccount": "oss@100022600923",
+    "ownerUin": "100022600923",
+    "uin": "100046147008",
+    "appId": 1308586823
+  },
+  "defaultRegion": "ap-guangzhou",
+  "cosEndpoint": "cos.ap-guangzhou.myqcloud.com",
+  "onePassword": {
+    "vault": "Personal",
+    "item": "Tencent-APUCH-oss",
+    "secretIdRef": "op://Personal/Tencent-APUCH-oss/add more/tencent-SecretId-01",
+    "secretKeyRef": "op://Personal/Tencent-APUCH-oss/add more/tencent-SecretKey-01"
+  },
+  "services": {
+    "cos": {
+      "cli": "coscli",
+      "bucketNamePattern": "{name}-{appId}"
+    },
+    "edgeOne": {
+      "cliService": "teo",
+      "apiVersion": "2022-09-01"
+    }
+  }
+}

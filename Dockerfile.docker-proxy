@@ -1,0 +1,8 @@
+ARG TARGETPLATFORM=linux/amd64
+FROM --platform=$TARGETPLATFORM node:22-bookworm-slim
+ENV NODE_ENV=production PORT=2375
+WORKDIR /app
+COPY scripts/docker-readonly-proxy.mjs ./scripts/docker-readonly-proxy.mjs
+USER root
+EXPOSE 2375
+ENTRYPOINT ["node", "./scripts/docker-readonly-proxy.mjs"]
