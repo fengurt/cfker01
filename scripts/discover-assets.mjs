@@ -5,12 +5,13 @@ import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { keccak_256 } from "@noble/hashes/sha3";
 import { probeDnsAssets, probeUrlAssets } from "./lib/dns-probe.mjs";
 
 const exec=promisify(execFile),startedAt=new Date().toISOString(),started=Date.now(),args=new Set(process.argv.slice(2));
 const root=resolve(import.meta.dirname,".."),output=resolve(process.env.ASSET_DISCOVERY_OUTPUT||`${root}/.cache/assets/latest.json`),accounts=[],errors=[],discoveryConfig=JSON.parse(await readFile(`${root}/config/discovery.json`,"utf8").catch(()=>"{}"));
 const assets=[];
-const enabledProviders=new Set((process.env.ASSET_DISCOVERY_PROVIDERS||"local,tencent,github,docker,cloudflare,godaddy").split(",").map(value=>value.trim().toLowerCase()).filter(Boolean));
+const enabledProviders=new Set((process.env.ASSET_DISCOVERY_PROVIDERS||"local,tencent,github,docker,cloudflare,godaddy,ens,solana").split(",").map(value=>value.trim().toLowerCase()).filter(Boolean));
 const priorDnsProbes=["tencent","godaddy","cloudflare"].some(provider=>enabledProviders.has(provider))?await loadPriorDnsProbes():new Map();
 if(enabledProviders.has("local"))await discoverLocal();
 await Promise.allSettled([
@@ -18,7 +19,9 @@ await Promise.allSettled([
   enabledProviders.has("github")&&discoverGithub(),
   enabledProviders.has("docker")&&discoverDocker(),
   enabledProviders.has("cloudflare")&&discoverCloudflare(),
-  enabledProviders.has("godaddy")&&discoverGodaddy()
+  enabledProviders.has("godaddy")&&discoverGodaddy(),
+  enabledProviders.has("ens")&&discoverEns(),
+  enabledProviders.has("solana")&&discoverSolanaDomains()
 ]);
 if(process.env.DNS_PROBE_ENABLED!=="false"){
   await probeDnsAssets(assets,{batchSize:Number(process.env.DNS_PROBE_BATCH_SIZE||40),concurrency:Number(process.env.DNS_PROBE_CONCURRENCY||6),timeoutMs:Number(process.env.DNS_PROBE_TIMEOUT_MS||4000)});
@@ -159,6 +162,38 @@ async function discoverGodaddy(){
     assets.push(a("godaddy",accountId,"dns_domain",domainId,name,domain.status||"active",null,`https://${name}`,{recordCount:records.length,expiresAt:domain.expires,renewAuto:domain.renewAuto,locked:domain.locked,nameservers:domain.nameServers||[]}));
     for(const record of records){const host=record.name==="@"?name:`${record.name}.${name}`,externalId=`${name}:${record.type}:${record.name}:${record.data}`;const probe=priorDnsProbes.get(externalId);assets.push(a("godaddy",accountId,"dns_record",externalId,host,"active",null,["A","CNAME"].includes(record.type)?`https://${host}`:null,{domain:name,type:record.type,value:record.data,ttl:record.ttl,priority:record.priority,...(probe?{probe}:{})},domainId));}
   }
+}
+
+function configuredNames(envName,configName,suffix){
+  const raw=process.env[envName];
+  const values=raw?raw.split(","):Array.isArray(discoveryConfig[configName])?discoveryConfig[configName]:[];
+  return [...new Set(values.map(value=>String(value).trim().toLowerCase()).filter(value=>value.endsWith(suffix)))];
+}
+function hex(value){return Buffer.from(value).toString("hex");}
+function isoFromUnix(value){const seconds=Number(value);return Number.isFinite(seconds)&&seconds>0?new Date(seconds*1000).toISOString():null;}
+async function discoverEns(){
+  const names=configuredNames("ENS_NAMES","ensNames",".eth"),rpcUrl=process.env.ENS_RPC_URL;
+  if(!names.length){assets.push(a("ens","ethereum-mainnet","credential_status","ens-names","ENS / Ethereum","unconfigured",null,"https://app.ens.domains/",{message:"ENS_NAMES is not configured; add explicit .eth names, not a wallet private key."}));errors.push({provider:"ens",scope:"configuration",code:"not_configured",message:"ENS_NAMES is not configured"});return;}
+  if(!rpcUrl){assets.push(a("ens","ethereum-mainnet","credential_status","ens-rpc","ENS RPC","unconfigured",null,null,{message:"ENS_RPC_URL is not configured"}));errors.push({provider:"ens",scope:"configuration",code:"not_configured",message:"ENS_RPC_URL is not configured"});return;}
+  accounts.push({provider:"ens",accountId:"ethereum-mainnet"});
+  assets.push(a("ens","ethereum-mainnet","credential_status","ens-rpc","ENS RPC","configured",null,null,{message:"Read-only Ethereum RPC configured"}));
+  const selector=hex(keccak_256(new TextEncoder().encode("nameExpires(uint256)"))).slice(0,8);
+  for(const name of names){
+    const label=name.slice(0,-4);
+    if(!/^[a-z0-9-]{3,}$/i.test(label)){errors.push({provider:"ens",scope:`name:${name}`,code:"unsupported_name",message:"Only direct ASCII .eth labels are supported by the deterministic registrar scanner"});assets.push(a("ens","ethereum-mainnet","chain_domain",name,name,"unverified",null,`https://app.ens.domains/${name}`,{chain:"ethereum",registry:"ENS Base Registrar",expirationSource:"unsupported name format",verificationUrl:`https://app.ens.domains/${name}`}));continue;}
+    try{
+      const labelHash=hex(keccak_256(new TextEncoder().encode(label))),response=await fetch(rpcUrl,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:name,method:"eth_call",params:[{to:"0x57f1887a8bf19b14fc0df6fd9b2acc9af147ea85",data:`0x${selector}${labelHash}`},"latest"]})}),body=await response.json();
+      if(!response.ok||body.error||typeof body.result!=="string")throw new Error(body?.error?.message||`HTTP ${response.status}`);
+      const expiresAt=isoFromUnix(BigInt(body.result));
+      assets.push(a("ens","ethereum-mainnet","chain_domain",name,name,expiresAt&&Date.parse(expiresAt)<Date.now()?"expired":"active",null,`https://app.ens.domains/${name}`,{chain:"ethereum",registry:"ENS Base Registrar",contract:"0x57f1887a8bf19b14fc0df6fd9b2acc9af147ea85",expiresAt,expirationSource:"ENS BaseRegistrar.nameExpires",gracePeriodDays:90,verifiedAt:new Date().toISOString(),verificationUrl:`https://app.ens.domains/${name}`}));
+    }catch(error){errors.push(err("ens",`name:${name}`,error));assets.push(a("ens","ethereum-mainnet","chain_domain",name,name,"unverified",null,`https://app.ens.domains/${name}`,{chain:"ethereum",registry:"ENS Base Registrar",expirationSource:"RPC lookup failed",verificationUrl:`https://app.ens.domains/${name}`}));}
+  }
+}
+async function discoverSolanaDomains(){
+  const names=configuredNames("SOL_NAMES","solNames",".sol");
+  if(!names.length){assets.push(a("solana","sns","credential_status","sol-names","Solana Name Service","unconfigured",null,"https://sns.id/",{message:"SOL_NAMES is not configured; add explicit .sol names to track."}));errors.push({provider:"solana",scope:"configuration",code:"not_configured",message:"SOL_NAMES is not configured"});return;}
+  accounts.push({provider:"solana",accountId:"sns"});
+  for(const name of names)assets.push(a("solana","sns","chain_domain",name,name,"perpetual",null,`https://sns.id/#/${name.slice(0,-4)}`,{chain:"solana",registry:"Solana Name Service",expirationModel:"one-time registration / no renewal expiry",expirationSource:"SNS documentation",verificationUrl:`https://sns.id/#/${name.slice(0,-4)}`,verifiedAt:new Date().toISOString()}));
 }
 
 function exactLocalProject(project,workingDir){const candidates=assets.filter(x=>x.provider==="local"&&x.projectId&&x.kind==="repository"),normalized=norm(project),matches=candidates.filter(x=>norm(x.name)===normalized||norm(x.metadata?.sourceRef?.split("/").pop())===normalized);if(matches.length===1)return{id:matches[0].projectId,reason:"exact_name"};if(workingDir){const base=norm(workingDir.split("/").filter(Boolean).pop());const byDir=candidates.filter(x=>norm(x.metadata?.sourceRef?.split("/").pop())===base);if(byDir.length===1)return{id:byDir[0].projectId,reason:"exact_working_directory"};}return null;}

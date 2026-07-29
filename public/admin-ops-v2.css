@@ -47,6 +47,18 @@
 .server-toolbar{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px}
 .server-toolbar .server-view-summary{margin-bottom:0;grid-template-columns:repeat(5,minmax(0,1fr))}
 .monitor-status{min-height:32px;padding:8px 2px;color:var(--muted);font-size:.72rem}
+.expiring-resource-panel{margin:0 0 14px;border:1px solid var(--line);border-radius:11px;background:var(--panel);overflow:hidden}
+.expiring-resource-heading{display:flex;align-items:start;justify-content:space-between;gap:18px;padding:13px 16px;border-bottom:1px solid var(--line)}
+.expiring-resource-heading h2{margin:2px 0 0;font-size:.92rem;letter-spacing:-.012em}
+.expiring-resource-heading p{max-width:490px;margin:0;color:var(--muted);font-size:.68rem;line-height:1.45;text-align:right}
+.expiring-resource-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line)}
+.expiring-resource-row{display:grid;gap:3px;min-width:0;padding:10px 14px;background:var(--panel-subtle)}
+.expiring-resource-row>a,.expiring-resource-row>strong{overflow:hidden;color:var(--text);font-size:.73rem;font-weight:750;text-decoration:none;text-overflow:ellipsis;white-space:nowrap}
+.expiring-resource-row>a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.expiring-resource-row small{overflow:hidden;color:var(--muted);font:600 .61rem/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;text-overflow:ellipsis;white-space:nowrap}
+.expiring-resource-row.is-warning{border-top:2px solid var(--warning)}
+.expiring-resource-row.is-danger{border-top:2px solid var(--danger)}
+.expiring-resource-empty{grid-column:1/-1;margin:0;padding:12px 14px;background:var(--panel-subtle);color:var(--muted);font-size:.7rem}
 .resource-snapshot-panel{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 18px;margin:0 0 14px;padding:14px 16px;border:1px solid var(--line);border-radius:11px;background:var(--panel-subtle)}
 .resource-snapshot-disclosure{margin:0 0 14px;border:1px solid var(--line);border-radius:11px;background:var(--panel-subtle)}
 .resource-snapshot-disclosure>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;cursor:pointer;color:var(--text);font-size:.76rem;font-weight:750;list-style:none}
@@ -152,6 +164,9 @@
   .project-repository,.project-deployments,.time-stack,.project-actions{padding-left:17px}
   .server-toolbar{grid-template-columns:1fr}
   .resource-snapshot-panel{grid-template-columns:1fr}
+  .expiring-resource-heading{align-items:start;flex-direction:column;gap:5px}
+  .expiring-resource-heading p{text-align:left}
+  .expiring-resource-list{grid-template-columns:1fr}
   .infrastructure-resource-heading{align-items:start;flex-direction:column;gap:5px}
   .infrastructure-resource-heading p{text-align:left}
   .infrastructure-resource-grid{grid-template-columns:1fr}

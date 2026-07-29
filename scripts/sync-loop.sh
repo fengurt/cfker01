@@ -3,7 +3,7 @@ set -euo pipefail
 
 : "${WORKER_URL:=http://catalog:8787}"
 : "${SYNC_TIMEOUT_SECONDS:=2700}"
-: "${ASSET_DISCOVERY_PROVIDERS:=tencent,github,docker,cloudflare,godaddy}"
+: "${ASSET_DISCOVERY_PROVIDERS:=tencent,github,docker,cloudflare,godaddy,ens,solana}"
 
 mkdir -p "${HOME}" /data/assets
 umask 077

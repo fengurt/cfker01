@@ -151,7 +151,7 @@ describe("cfker01 worker", () => {
     expect(login.status).toBe(200);
     const cookie = login.headers.get("set-cookie");
     expect(cookie).toContain("HttpOnly");
-    expect(cookie).toContain("SameSite=Strict");
+    expect(cookie).toContain("SameSite=Lax");
     expect(cookie).not.toContain(String(env.ADMIN_TOKEN));
     const session = await worker.fetch(new Request("http://127.0.0.1/admin/session", { headers: { Cookie: cookie!.split(";")[0] } }), env, ctx);
     expect(session.status).toBe(200);
@@ -162,6 +162,7 @@ describe("cfker01 worker", () => {
     expect(crossOrigin.status).toBe(403);
     const proxiedLogin = await worker.fetch(new Request("http://g.ksamint.cn/admin/login", { method: "POST", headers: { "Content-Type": "application/json", Host: "g.ksamint.cn", Origin: "https://g.ksamint.cn", "X-Forwarded-Proto": "https" }, body: JSON.stringify(credentials) }), env, ctx);
     expect(proxiedLogin.status).toBe(200);
+    expect(proxiedLogin.headers.get("set-cookie")).toContain("Secure");
     await waitOnExecutionContext(ctx);
   });
 
@@ -170,15 +171,17 @@ describe("cfker01 worker", () => {
     const denied=await worker.fetch(new Request("http://example.com/admin/assets"),env,ctx);
     expect(denied.status).toBe(401);
     const headers={Authorization:`Bearer ${env.ADMIN_TOKEN}`,"Content-Type":"application/json"};
-    const imported=await worker.fetch(new Request("http://example.com/admin/assets/import",{method:"POST",headers,body:JSON.stringify({provider:"tencent",accountId:"test-account",assets:[{kind:"dns_domain",externalId:"example.com",name:"example.com",status:"enable",url:"https://example.com",metadata:{recordCount:2}},{kind:"cos_bucket",externalId:"example-bucket",name:"example-bucket",status:"available",region:"ap-guangzhou",metadata:{}}]})}),env,ctx);
+    const imported=await worker.fetch(new Request("http://example.com/admin/assets/import",{method:"POST",headers,body:JSON.stringify({provider:"tencent",accountId:"test-account",assets:[{kind:"dns_domain",externalId:"example.com",name:"example.com",status:"enable",url:"https://example.com",metadata:{recordCount:2,expiresAt:"2030-01-01T00:00:00.000Z"}},{kind:"cos_bucket",externalId:"example-bucket",name:"example-bucket",status:"available",region:"ap-guangzhou",metadata:{}}]})}),env,ctx);
     expect(imported.status).toBe(200);
     expect(await imported.json()).toMatchObject({ok:true,imported:2});
     const listed=await worker.fetch(new Request("http://example.com/admin/assets?provider=tencent&kind=dns_domain",{headers}),env,ctx);
     expect(listed.status).toBe(200);
     const body=await listed.json() as {data:Array<{name:string;metadata:{recordCount:number}}>;meta:{total:number}};
     expect(body.meta.total).toBe(1);expect(body.data[0]).toMatchObject({name:"example.com",metadata:{recordCount:2}});
+    const expiring=await worker.fetch(new Request("http://example.com/admin/assets?expiring_days=3650&sort=expires",{headers}),env,ctx);
+    expect(expiring.status).toBe(200);expect((await expiring.json() as {data:Array<{name:string}>}).data[0]?.name).toBe("example.com");
     const summary=await worker.fetch(new Request("http://example.com/admin/assets/summary",{headers}),env,ctx);
-    expect(summary.status).toBe(200);expect(await summary.json()).toMatchObject({data:{groups:expect.any(Array)}});
+    expect(summary.status).toBe(200);expect(await summary.json()).toMatchObject({data:{groups:expect.any(Array),expiring:expect.arrayContaining([expect.objectContaining({name:"example.com"})])}});
     await waitOnExecutionContext(ctx);
   });
 

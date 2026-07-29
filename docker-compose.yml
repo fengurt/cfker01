@@ -91,7 +91,7 @@ services:
       SCANNER_POLL_SECONDS: ${SCANNER_POLL_SECONDS:-60}
       SYNC_INTERVAL_SECONDS: ${SYNC_INTERVAL_SECONDS:-14400}
       SYNC_TIMEOUT_SECONDS: ${SYNC_TIMEOUT_SECONDS:-2700}
-      ASSET_DISCOVERY_PROVIDERS: ${ASSET_DISCOVERY_PROVIDERS:-tencent,github,docker,cloudflare,godaddy}
+      ASSET_DISCOVERY_PROVIDERS: ${ASSET_DISCOVERY_PROVIDERS:-tencent,github,docker,cloudflare,godaddy,ens,solana}
       ASSET_DISCOVERY_OUTPUT: /data/assets/latest.json
       DOCKER_API_URL: http://docker-api:2375
       DOCKER_SERVER_ID: ${DOCKER_SERVER_ID:-db6ae7af-e560-47a4-a3e0-5d51e81f7eb8}
@@ -112,6 +112,9 @@ services:
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
       GODADDY_API_TOKEN: ${GODADDY_API_TOKEN:-}
       GODADDY_ACCOUNT_ID: ${GODADDY_ACCOUNT_ID:-default}
+      ENS_RPC_URL: ${ENS_RPC_URL:-}
+      ENS_NAMES: ${ENS_NAMES:-}
+      SOL_NAMES: ${SOL_NAMES:-}
     volumes:
       - tableai_data:/data
       - /etc/nginx/sites-enabled:/nginx:ro

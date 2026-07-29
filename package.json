@@ -45,11 +45,12 @@
     "dev:stop": "./scripts/dev-stop.sh"
   },
   "dependencies": {
+    "@noble/hashes": "1.8.0",
     "wrangler": "^4.110.0"
   },
   "devDependencies": {
-    "@astrojs/sitemap": "^3.7.3",
     "@astrojs/check": "^0.9.9",
+    "@astrojs/sitemap": "^3.7.3",
     "@cloudflare/vitest-pool-workers": "^0.8.19",
     "@types/node": "^25.9.1",
     "astro": "^5.18.2",
