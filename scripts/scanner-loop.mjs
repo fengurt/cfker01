@@ -62,6 +62,9 @@ async function failUnstartedRun(job, error) {
   } catch {}
 }
 async function recordError(scope, error) { await writeFile("/data/assets/last-error", `${new Date().toISOString()} ${scope} ${safeError(error)}\n`, { mode: 0o600 }).catch(() => {}); }
-function safeError(error) { return String(error?.stderr || error?.message || error || "unknown").trim().split("\n").at(-1).slice(0, 500); }
+function safeError(error) {
+  const lines=String(error?.stderr || error?.message || error || "unknown").trim().split("\n").map(line=>line.trim()).filter(Boolean);
+  return (lines.find(line=>/^(Error|TypeError|SyntaxError|ReferenceError|RangeError)\b/.test(line))||lines.find(line=>!/^Node\.js v\d/.test(line))||"unknown").slice(0,500);
+}
 async function api(url, options) { const response = await fetch(url, options), text = await response.text(); if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 1000)}`); return text ? JSON.parse(text) : {}; }
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }

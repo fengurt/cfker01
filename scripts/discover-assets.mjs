@@ -14,15 +14,19 @@ const assets=[];
 const enabledProviders=new Set((process.env.ASSET_DISCOVERY_PROVIDERS||"local,tencent,github,docker,cloudflare,godaddy,ens,solana").split(",").map(value=>value.trim().toLowerCase()).filter(Boolean));
 const priorDnsProbes=["tencent","godaddy","cloudflare"].some(provider=>enabledProviders.has(provider))?await loadPriorDnsProbes():new Map();
 if(enabledProviders.has("local"))await discoverLocal();
-await Promise.allSettled([
-  enabledProviders.has("tencent")&&discoverTencent(),
-  enabledProviders.has("github")&&discoverGithub(),
-  enabledProviders.has("docker")&&discoverDocker(),
-  enabledProviders.has("cloudflare")&&discoverCloudflare(),
-  enabledProviders.has("godaddy")&&discoverGodaddy(),
-  enabledProviders.has("ens")&&discoverEns(),
-  enabledProviders.has("solana")&&discoverSolanaDomains()
-]);
+// A rejected provider must make its run partial.  Silently discarding a
+// rejection would incorrectly mark the previous authoritative inventory stale.
+const discoveryTasks=[
+  ["tencent",discoverTencent],
+  ["github",discoverGithub],
+  ["docker",discoverDocker],
+  ["cloudflare",discoverCloudflare],
+  ["godaddy",discoverGodaddy],
+  ["ens",discoverEns],
+  ["solana",discoverSolanaDomains]
+].filter(([provider])=>enabledProviders.has(provider));
+const settled=await Promise.allSettled(discoveryTasks.map(([,task])=>task()));
+for(let index=0;index<settled.length;index+=1)if(settled[index].status==="rejected")errors.push(err(discoveryTasks[index][0],"scanner",settled[index].reason));
 if(process.env.DNS_PROBE_ENABLED!=="false"){
   await probeDnsAssets(assets,{batchSize:Number(process.env.DNS_PROBE_BATCH_SIZE||40),concurrency:Number(process.env.DNS_PROBE_CONCURRENCY||6),timeoutMs:Number(process.env.DNS_PROBE_TIMEOUT_MS||4000)});
   await probeUrlAssets(assets,{batchSize:Number(process.env.PAGES_PROBE_BATCH_SIZE||20),concurrency:Number(process.env.PAGES_PROBE_CONCURRENCY||4),timeoutMs:Number(process.env.PAGES_PROBE_TIMEOUT_MS||5000)});

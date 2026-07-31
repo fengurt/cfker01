@@ -7,6 +7,11 @@ ENV NODE_ENV=production \
     PATH=/opt/tccli/bin:$PATH
 WORKDIR /app
 
+# The scanner imports a small production dependency set (for deterministic
+# Ethereum name hashing). Keep its node_modules in this sidecar image rather
+# than relying on the catalog image's build stage.
+COPY package.json package-lock.json ./
+
 RUN sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gh python3 python3-venv \
@@ -15,6 +20,9 @@ RUN sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.
     && curl -fsSL https://cosbrowser.cloud.tencent.com/software/coscli/coscli-linux-amd64 -o /usr/local/bin/coscli \
     && echo "${COSCLI_SHA256}  /usr/local/bin/coscli" | sha256sum -c - \
     && chmod 0755 /usr/local/bin/coscli \
+    && npm config set fetch-retries 5 \
+    && npm config set fetch-retry-maxtimeout 120000 \
+    && npm ci --omit=dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/discover-assets.mjs scripts/scanner-loop.mjs scripts/sync-loop.sh ./scripts/
