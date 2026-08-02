@@ -315,6 +315,8 @@ function openApi(request: Request): Response {
     "/overview": ["get"], "/resource-snapshots/current": ["get"], "/resource-snapshots": ["post"], "/sources": ["get"], "/sources/{id}": ["patch"], "/resources": ["get"], "/resources/{id}": ["get", "patch"],
     "/export/assets.ndjson": ["get"], "/scans": ["post"], "/scans/{id}": ["get"], "/scans/{id}/cancel": ["post"], "/scans/{id}/retry": ["post"],
     "/resource-links": ["get"], "/resource-links/{id}": ["patch"], "/service-keys": ["get", "post"], "/service-keys/{id}": ["delete"], "/service-keys/{id}/rotate": ["post"],
+    "/tasks": ["get", "post"], "/tasks/{id}": ["get", "patch"], "/tasks/{id}/transition": ["post"], "/tasks/{id}/comments": ["post"], "/tasks/{id}/dependencies": ["post"], "/tasks/gantt": ["get"],
+    "/task-people": ["get", "post"], "/task-people/{id}": ["patch"], "/task-milestones": ["get", "post"], "/task-milestones/{id}": ["patch"], "/task-views": ["get", "post"], "/task-views/{id}": ["delete"],
   })) paths[path] = Object.fromEntries(methods.map((method) => [method, { responses: { "200": { description: "Success" } } }]));
   return Response.json({ openapi: "3.1.0", info: { title: "TableAI Administrator API", version: "1.0.0" }, servers: [{ url: `${origin}/api/admin/v1` }], paths }, { headers: { "Cache-Control": "public, max-age=300" } });
 }

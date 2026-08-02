@@ -1,6 +1,6 @@
 import { logEvent } from "./logger";
 
-export type ApiScope = "read" | "write" | "admin" | "skills:write";
+export type ApiScope = "read" | "write" | "admin" | "skills:write" | "tasks:read" | "tasks:write";
 
 const KEY_PREFIX = "cfk_";
 const KEY_ID_LEN = 8;

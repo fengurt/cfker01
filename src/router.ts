@@ -20,6 +20,7 @@ import { handleAdminLinks } from "./routes/admin-links";
 import { handleAdminMonitor } from "./routes/admin-monitor";
 import { handleAdminApiV1 } from "./routes/admin-api-v1";
 import { handleIngestApiV1 } from "./routes/ingest-api-v1";
+import { handleAdminTasksV1 } from "./routes/admin-tasks";
 
 export async function handleRequest(
   request: Request,
@@ -36,6 +37,7 @@ export async function handleRequest(
     const auth = await requireAdminToken(request, env); if(auth)return auth;const session=await readAdminSession(request,env);return jsonResponse({ok:true,role:session?.role??"system_admin",phone:session?.phone??null});
   }
 
+  if (pathname === "/api/admin/v1/tasks" || pathname.startsWith("/api/admin/v1/tasks/") || pathname === "/api/admin/v1/task-people" || pathname.startsWith("/api/admin/v1/task-people/") || pathname === "/api/admin/v1/task-milestones" || pathname.startsWith("/api/admin/v1/task-milestones/") || pathname === "/api/admin/v1/task-views" || pathname.startsWith("/api/admin/v1/task-views/") || pathname === "/api/admin/v1/task-context") return handleAdminTasksV1(request, env, ctx);
   if (pathname === "/api/admin/v1" || pathname.startsWith("/api/admin/v1/")) return handleAdminApiV1(request, env, ctx);
   if (pathname === "/api/ingest/v1" || pathname.startsWith("/api/ingest/v1/")) return handleIngestApiV1(request, env, ctx);
 

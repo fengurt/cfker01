@@ -76,6 +76,54 @@ describe("cfker01 worker", () => {
     await waitOnExecutionContext(ctx);
   });
 
+  it("creates, filters, schedules, and protects operational tasks", async () => {
+    const ctx = createExecutionContext();
+    const adminHeaders = { Authorization: `Bearer ${env.ADMIN_TOKEN}`, "Content-Type": "application/json" };
+    const personResponse = await worker.fetch(new Request("http://example.com/api/admin/v1/task-people", { method: "POST", headers: adminHeaders, body: JSON.stringify({ kind: "person", displayName: "Operations Owner", handle: "ops-owner" }) }), env, ctx);
+    expect(personResponse.status).toBe(201);
+    const person = (await personResponse.json()) as { data: { id: string } };
+    const firstResponse = await worker.fetch(new Request("http://example.com/api/admin/v1/tasks", { method: "POST", headers: adminHeaders, body: JSON.stringify({ title: "Prepare AMD deployment", status: "todo", ownerId: person.data.id, startAt: "2030-01-01T00:00:00.000Z", dueAt: "2030-01-10T00:00:00.000Z", expectedValue: 12500, valueConfidence: 70, strategicValue: 4, deliveryDomain: "infrastructure" }) }), env, ctx);
+    expect(firstResponse.status).toBe(201);
+    const first = (await firstResponse.json()) as { data: { id: string; identifier: string; expectedValue: number } };
+    expect(first.data).toMatchObject({ expectedValue: 12500 });
+    const secondResponse = await worker.fetch(new Request("http://example.com/api/admin/v1/tasks", { method: "POST", headers: adminHeaders, body: JSON.stringify({ title: "Verify production DNS", status: "backlog", deliveryDomain: "infrastructure" }) }), env, ctx);
+    const second = (await secondResponse.json()) as { data: { id: string } };
+    const milestoneResponse = await worker.fetch(new Request("http://example.com/api/admin/v1/task-milestones", { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "Production readiness", targetAt: "2030-01-10T00:00:00.000Z" }) }), env, ctx);
+    expect(milestoneResponse.status).toBe(201);
+    const milestone = (await milestoneResponse.json()) as { data: { id: string } };
+    const schedule = await worker.fetch(new Request(`http://example.com/api/admin/v1/tasks/${first.data.id}`, { method: "PATCH", headers: adminHeaders, body: JSON.stringify({ milestoneId: milestone.data.id }) }), env, ctx);
+    expect(schedule.status).toBe(200);
+    const participants = await worker.fetch(new Request(`http://example.com/api/admin/v1/tasks/${first.data.id}/participants`, { method: "PUT", headers: adminHeaders, body: JSON.stringify({ participants: [{ personId: person.data.id, role: "counterpart" }] }) }), env, ctx);
+    expect(participants.status).toBe(200);
+    expect(await participants.json()).toMatchObject({ data: { participants: [expect.objectContaining({ id: person.data.id, role: "counterpart" })] } });
+    const dependency = await worker.fetch(new Request(`http://example.com/api/admin/v1/tasks/${first.data.id}/dependencies`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ dependsOnTaskId: second.data.id }) }), env, ctx);
+    expect(dependency.status).toBe(201);
+    const cycle = await worker.fetch(new Request(`http://example.com/api/admin/v1/tasks/${second.data.id}/dependencies`, { method: "POST", headers: adminHeaders, body: JSON.stringify({ dependsOnTaskId: first.data.id }) }), env, ctx);
+    expect(cycle.status).toBe(409);
+    expect(await cycle.json()).toMatchObject({ error: { code: "dependency_cycle" } });
+    const list = await worker.fetch(new Request("http://example.com/api/admin/v1/tasks?status=todo&domain=infrastructure", { headers: adminHeaders }), env, ctx);
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ data: [expect.objectContaining({ id: first.data.id, ownerName: "Operations Owner" })], meta: { summary: expect.objectContaining({ open: 2, dueSoon: 0, unassigned: 1 }) } });
+    const counterpartList = await worker.fetch(new Request(`http://example.com/api/admin/v1/tasks?participant=${person.data.id}`, { headers: adminHeaders }), env, ctx);
+    expect(counterpartList.status).toBe(200);
+    expect(await counterpartList.json()).toMatchObject({ data: [expect.objectContaining({ id: first.data.id, milestoneId: milestone.data.id })] });
+    const gantt = await worker.fetch(new Request("http://example.com/api/admin/v1/tasks/gantt?domain=infrastructure", { headers: adminHeaders }), env, ctx);
+    expect(gantt.status).toBe(200);
+    expect(await gantt.json()).toMatchObject({ data: { tasks: expect.arrayContaining([expect.objectContaining({ id: first.data.id })]), dependencies: expect.arrayContaining([expect.objectContaining({ task_id: first.data.id, depends_on_task_id: second.data.id })]) } });
+
+    const keyResponse = await worker.fetch(new Request("http://example.com/admin/keys", { method: "POST", headers: adminHeaders, body: JSON.stringify({ name: "mcp-task-test", scopes: ["read", "tasks:read", "tasks:write"] }) }), env, ctx);
+    const taskKey = ((await keyResponse.json()) as { key: string }).key;
+    const agentUpdate = await worker.fetch(new Request("http://example.com/mcp", { method: "POST", headers: { "Content-Type": "application/json", "X-Api-Key": taskKey }, body: JSON.stringify({ jsonrpc: "2.0", id: "agent-complete", method: "tools/call", params: { name: "tasks.update", arguments: { id: first.data.id, changes: { status: "done" } } } }) }), env, ctx);
+    expect(agentUpdate.status).toBe(403);
+    expect(await agentUpdate.json()).toMatchObject({ error: { message: "agent_terminal_transition_requires_admin" } });
+    const agentComment = await worker.fetch(new Request("http://example.com/mcp", { method: "POST", headers: { "Content-Type": "application/json", "X-Api-Key": taskKey }, body: JSON.stringify({ jsonrpc: "2.0", id: "agent-comment", method: "tools/call", params: { name: "tasks.comment", arguments: { id: first.data.id, body: "Deployment evidence collected." } } }) }), env, ctx);
+    expect(agentComment.status).toBe(200);
+    const taskResource = await worker.fetch(new Request("http://example.com/mcp", { method: "POST", headers: { "Content-Type": "application/json", "X-Api-Key": taskKey }, body: JSON.stringify({ jsonrpc: "2.0", id: "task-resource", method: "resources/read", params: { uri: "ops://tasks/snapshot" } }) }), env, ctx);
+    expect(taskResource.status).toBe(200);
+    expect(await taskResource.json()).toMatchObject({ result: { contents: [expect.objectContaining({ uri: "ops://tasks/snapshot", mimeType: "application/json" })] } });
+    await waitOnExecutionContext(ctx);
+  });
+
   it("returns the status HTML page", async () => {
     const request = new Request("http://example.com/status");
     const ctx = createExecutionContext();
