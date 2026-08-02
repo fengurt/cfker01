@@ -14,7 +14,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
     <link rel="stylesheet" href="/admin-compact.css?v=20260713-2" />
     <link rel="stylesheet" href="/admin-ops-v2.css?v=20260729-expiry-1" />
     <link rel="stylesheet" href="/admin-scanner.css?v=20260715-1" />
-    <link rel="stylesheet" href="/admin-tasks.css?v=20260802-2" />
+    <link rel="stylesheet" href="/admin-tasks.css?v=20260803-1" />
     <link rel="stylesheet" href="/admin-interactions.css?v=20260802-5" />
   </head>
   <body>
@@ -27,7 +27,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
       <section class="login-panel" id="login-panel">
         <form id="login-form">
           <p class="kicker">ADMIN / 管理员</p><h1 data-i18n="loginTitle">系统管理员登录</h1>
-          <p data-i18n="loginHelp">使用手机号码和密码登录。会话保存在安全的 HttpOnly Cookie 中，有效期八小时。</p>
+          <p data-i18n="loginHelp">使用手机号码和密码登录。可信设备会通过安全的 HttpOnly Cookie 保持登录 90 天，并在使用时自动续期。</p>
           <label><span data-i18n="phone">手机号码</span><input id="admin-phone" type="tel" inputmode="tel" autocomplete="username" required /></label>
           <label><span data-i18n="password">密码</span><input id="admin-password" type="password" autocomplete="current-password" required /></label>
           <p class="form-error" id="login-error" role="alert"></p><button class="primary" type="submit" data-i18n="login">登录</button>
@@ -41,7 +41,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
           <div class="source-status-body"><div class="source-status-head"><p id="source-poll-label">正在读取刷新状态…</p><button id="scan-all-sources" type="button" data-i18n="refreshAll">立即刷新全部</button></div><div id="source-connector-list" class="source-connector-list" aria-live="polite"></div></div>
         </details>
         <section id="tasks-view" hidden>
-          <div class="task-command-bar"><div class="task-metrics"><div><strong id="task-metric-open">0</strong><span data-i18n="openTasks">进行中</span></div><div><strong id="task-metric-due-soon">0</strong><span data-i18n="dueSoonTasks">7 天内到期</span></div><div><strong id="task-metric-unassigned">0</strong><span data-i18n="unassignedTasks">未分派</span></div><div><strong id="task-metric-value">¥0</strong><span data-i18n="expectedValue">预期收益</span></div></div><button id="quick-task-open" class="primary" type="button" aria-keyshortcuts="Control+K Meta+K"><span data-i18n="newTask">新建任务</span><kbd>⌘ K</kbd></button></div>
+          <div class="task-command-bar"><div class="task-metrics"><div><strong id="task-metric-open">0</strong><span data-i18n="openTasks">进行中</span></div><div><strong id="task-metric-due-soon">0</strong><span data-i18n="dueSoonTasks">7 天内到期</span></div><div><strong id="task-metric-unassigned">0</strong><span data-i18n="unassignedTasks">未分派</span></div><div><strong id="task-metric-value">¥0</strong><span data-i18n="expectedValue">预期收益</span></div></div><span id="task-realtime-status" class="task-realtime-status" data-state="offline" role="status">离线</span><button id="quick-task-open" class="primary" type="button" aria-keyshortcuts="Control+K Meta+K"><span data-i18n="newTask">新建任务</span><kbd>⌘ K</kbd></button></div>
           <div class="task-view-bar"><div class="task-view-switch" role="group" aria-label="任务视图"><button class="active" type="button" data-task-view="list" data-i18n="taskList">列表</button><button type="button" data-task-view="board" data-i18n="taskBoard">看板</button><button type="button" data-task-view="gantt" data-i18n="taskGantt">甘特图</button></div><div class="task-saved-views"><select id="task-saved-view" aria-label="保存的视图"><option value="" data-i18n="savedViews">保存的视图</option></select><input id="task-view-name" data-i18n-placeholder="viewName" placeholder="视图名称" /><button id="save-task-view" type="button" data-i18n="saveView">保存视图</button></div></div>
           <form id="task-filters" class="task-filters">
             <label class="task-search"><span data-i18n="search">搜索</span><input name="q" type="search" data-i18n-placeholder="taskSearch" placeholder="任务、编号或描述" /></label>
@@ -133,7 +133,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
     <dialog id="shortcut-dialog" class="shortcut-dialog"><form method="dialog"><div class="dialog-head"><div><p class="kicker">KEYBOARD / 键盘</p><h2 id="shortcut-dialog-title">快捷键</h2><p id="shortcut-dialog-help">无需离开键盘即可切换视图、搜索和新建任务。</p></div><button value="cancel" aria-label="关闭快捷键帮助">×</button></div><div id="shortcut-list" class="shortcut-list"></div><div class="dialog-actions"><button value="cancel">关闭</button></div></form></dialog>
     <div id="interaction-tooltip" class="interaction-tooltip" role="tooltip" hidden><span></span><kbd></kbd></div>
 <script is:inline src="/admin.js?v=20260802-tasks-1"></script>
-    <script is:inline src="/admin-tasks.js?v=20260802-3"></script>
+    <script is:inline src="/admin-tasks.js?v=20260803-1"></script>
     <script is:inline src="/admin-infrastructure.js?v=20260723-2"></script>
     <script is:inline src="/admin-interactions.js?v=20260802-5"></script>
   </body>

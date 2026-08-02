@@ -1,6 +1,9 @@
 # Copy to .dev.vars for local development (never commit secrets)
 ADMIN_TOKEN=change-me-local-admin-token
 API_KEY_SALT=change-me-local-salt-min-32-chars-long
+SESSION_SIGNING_KEY=change-me-independent-session-signing-key
+TASK_CORE_URL=http://127.0.0.1:8790
+TASK_CORE_INTERNAL_TOKEN=change-me-independent-task-core-token
 CONTENT_ENCRYPTION_KEY=base64-encoded-32-byte-key
 CONTENT_KEY_VERSION=v1
 INTERNAL_MONITOR_TOKEN=change-me-separate-monitor-token

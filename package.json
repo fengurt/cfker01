@@ -15,7 +15,7 @@
     "check": "npm run content:validate && astro check && tsc --noEmit && wrangler deploy --dry-run --env staging",
     "types": "wrangler types",
     "tail": "wrangler tail",
-    "test": "vitest run && node scripts/test-dns-probe.mjs",
+    "test": "vitest run && node scripts/test-dns-probe.mjs && npm run task-core:test",
     "test:watch": "vitest",
     "d1:migrate:local": "wrangler d1 migrations apply cfker01-mgmt --local",
     "d1:migrate:remote": "wrangler d1 migrations apply cfker01-mgmt --remote",
@@ -31,6 +31,11 @@
     "scanner:central": "node scripts/scanner-loop.mjs",
     "scanner:local": "node scripts/local-scanner-agent.mjs",
     "scanner:local:install": "./scripts/install-local-scanner-launchagent.sh",
+    "task-core:dev": "node --watch services/task-core/server.mjs",
+    "task-core:start": "node services/task-core/server.mjs",
+    "task-core:test": "node --test services/task-core/test/*.test.mjs",
+    "task-core:test:integration": "node services/task-core/test/integration.mjs",
+    "task-core:migrate": "node scripts/migrate-d1-tasks-to-task-core.mjs",
     "skills:publish": "node scripts/publish-mcp-skills.mjs",
     "secrets:local": "./scripts/materialize-secrets.sh .dev.vars",
     "secrets:docker": "./scripts/materialize-secrets.sh .env.docker",
@@ -41,12 +46,17 @@
     "docker:up": "docker compose up --build -d",
     "docker:down": "docker compose down",
     "backup:cos": "./scripts/backup-remote-to-cos.sh",
+    "task-core:backup:cos": "./scripts/backup-task-postgres-to-cos.sh",
+    "task-core:restore:verify": "./scripts/verify-task-backup.sh",
     "dev:up": "./scripts/dev-up.sh",
     "dev:stop": "./scripts/dev-stop.sh"
   },
   "dependencies": {
     "@noble/hashes": "1.8.0",
-    "wrangler": "^4.110.0"
+    "pg": "^8.16.3",
+    "redis": "^5.8.2",
+    "wrangler": "4.118.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
@@ -56,7 +66,7 @@
     "astro": "^5.18.2",
     "marked": "^15.0.12",
     "typescript": "^5.8.3",
-    "vitest": "^3.1.2",
+    "vitest": "^3.2.6",
     "zod": "^3.25.76"
   }
 }

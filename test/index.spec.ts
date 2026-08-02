@@ -201,6 +201,7 @@ describe("cfker01 worker", () => {
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
     expect(cookie).toContain("tableai_admin_device=");
+    expect(cookie).toContain("Max-Age=7776000");
     expect(cookie).not.toContain(String(env.ADMIN_TOKEN));
     const session = await worker.fetch(new Request("http://127.0.0.1/admin/session", { headers: { Cookie: cookie!.split(";")[0] } }), env, ctx);
     expect(session.status).toBe(200);
@@ -209,6 +210,8 @@ describe("cfker01 worker", () => {
     expect(deviceCookie).toBeTruthy();
     const trustedDevice = await worker.fetch(new Request("http://127.0.0.1/admin/session", { headers: { Cookie: deviceCookie! } }), env, ctx);
     expect(trustedDevice.status).toBe(200);
+    expect(trustedDevice.headers.get("set-cookie")).toContain("tableai_admin_device=");
+    expect(trustedDevice.headers.get("set-cookie")).toContain("Max-Age=7776000");
     const logout = await worker.fetch(new Request("http://127.0.0.1/admin/logout", { method:"POST", headers:{Cookie:deviceCookie!} }), env, ctx);
     expect(logout.status).toBe(200);
     const revokedDevice = await worker.fetch(new Request("http://127.0.0.1/admin/session", { headers: { Cookie: deviceCookie! } }), env, ctx);

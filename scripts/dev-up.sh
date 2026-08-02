@@ -136,6 +136,14 @@ choose_port() {
 }
 
 cleanup_existing
+
+TASK_CORE_ARGS=()
+if [[ "${TASK_CORE_DEV:-true}" == "true" ]]; then
+  "${ROOT}/scripts/task-core-dev-up.sh"
+  TASK_CORE_PORT_VALUE="$(cat "${ROOT}/.wrangler/task-core-dev.port")"
+  TASK_CORE_TOKEN_VALUE="$(cat "${ROOT}/.wrangler/task-core-dev.token")"
+  TASK_CORE_ARGS=(--var "TASK_CORE_URL:http://127.0.0.1:${TASK_CORE_PORT_VALUE}" --var "TASK_CORE_INTERNAL_TOKEN:${TASK_CORE_TOKEN_VALUE}")
+fi
 choose_port
 
 choose_inspector_port() {
@@ -168,6 +176,7 @@ mkdir -p "${ROOT}/.wrangler"
 nohup npx wrangler dev --port "${PORT}" --ip 127.0.0.1 \
   --inspector-port "${INSPECTOR_PORT}" \
   --persist-to "${ROOT}/.wrangler/state" \
+  "${TASK_CORE_ARGS[@]}" \
   >"${ROOT}/.wrangler/dev-up.log" 2>&1 &
 DEV_PID=$!
 echo "${DEV_PID}" >"${PID_FILE}"

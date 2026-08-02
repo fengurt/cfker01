@@ -8,13 +8,13 @@ This image runs the Worker through Wrangler's Miniflare/workerd local runtime wi
 - Docker Engine 24 or newer
 - Docker Compose plugin
 - A reverse proxy such as Caddy, Nginx, or Traefik for TLS
-- Backups for the `tableai_data` volume
+- Backups for the `tableai_data` volume and Task PostgreSQL
 
 ## Start
 
 ```bash
 cp .env.docker.example .env.docker
-# Replace both secrets before continuing.
+# Materialize independent catalog, session, Task, database, and backup secrets.
 docker compose --env-file .env.docker build --pull
 docker compose --env-file .env.docker up -d
 docker compose ps
@@ -31,6 +31,8 @@ The named `tableai_data` volume contains local D1 and KV state. The entrypoint a
 docker run --rm -v tableai_data:/data -v "$PWD":/backup debian:bookworm-slim \
   tar -C /data -czf /backup/tableai-data-backup.tgz .
 ```
+
+Task, organization, project, board, comment, and event state lives in the separate `task_postgres_data` volume. Valkey is intentionally ephemeral. See [Task collaboration core](./task-collaboration.md) for migration, encrypted COS backup, and recovery verification.
 
 ## Upgrade and rollback
 
@@ -107,7 +109,7 @@ Terminate HTTPS at the reverse proxy and forward to `127.0.0.1:8787`. Do not exp
 
 `COOKIE_SECURE=true` is the Docker default so admin cookies are restricted to HTTPS. For direct HTTP-only testing, set it to `false`; never use that setting on an internet-facing server.
 
-The checked-in [Nginx configuration](../deploy/nginx-g.ksamint.cn.conf) includes HTTPS redirect, HSTS, browser security headers, bounded request size/timeouts, and immutable caching for static assets.
+The checked-in [Nginx configuration](../deploy/nginx-g.ksamint.cn.conf) includes HTTPS redirect, HSTS, browser security headers, bounded request size/timeouts, immutable caching for static assets, and direct REST/MCP/WebSocket routes to Task Core.
 
 ## COS backups
 

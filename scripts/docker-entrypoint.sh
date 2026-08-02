@@ -28,6 +28,9 @@ umask 077
   [[ -n "${SEMANTIC_SCHOLAR_API_KEY:-}" ]] && printf 'SEMANTIC_SCHOLAR_API_KEY=%s\n' "$SEMANTIC_SCHOLAR_API_KEY"
   [[ -n "${INTERNAL_MONITOR_TOKEN:-}" ]] && printf 'INTERNAL_MONITOR_TOKEN=%s\n' "$INTERNAL_MONITOR_TOKEN"
   [[ -n "${LOCAL_SCAN_ROOT:-}" ]] && printf 'LOCAL_SCAN_ROOT=%s\n' "$LOCAL_SCAN_ROOT"
+  [[ -n "${SESSION_SIGNING_KEY:-}" ]] && printf 'SESSION_SIGNING_KEY=%s\n' "$SESSION_SIGNING_KEY"
+  [[ -n "${TASK_CORE_URL:-}" ]] && printf 'TASK_CORE_URL=%s\n' "$TASK_CORE_URL"
+  [[ -n "${TASK_CORE_INTERNAL_TOKEN:-}" ]] && printf 'TASK_CORE_INTERNAL_TOKEN=%s\n' "$TASK_CORE_INTERNAL_TOKEN"
 } > .dev.vars
 
 npx wrangler d1 migrations apply cfker01-mgmt --local --persist-to "$PERSIST_DIR"

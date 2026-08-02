@@ -1,4 +1,82 @@
 services:
+  task-postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${TASK_POSTGRES_DB:-tableai_tasks}
+      POSTGRES_USER: ${TASK_POSTGRES_USER:-tableai_tasks}
+      POSTGRES_PASSWORD: ${TASK_POSTGRES_PASSWORD:?Set TASK_POSTGRES_PASSWORD in .env.docker}
+    volumes:
+      - task_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    pids_limit: 256
+    mem_limit: ${TASK_POSTGRES_MEMORY_LIMIT:-1g}
+    cpus: ${TASK_POSTGRES_CPU_LIMIT:-1.0}
+
+  task-valkey:
+    image: valkey/valkey:8-bookworm
+    user: "999:999"
+    restart: unless-stopped
+    command:
+      [
+        "valkey-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--maxmemory",
+        "${TASK_VALKEY_MAXMEMORY:-256mb}",
+        "--maxmemory-policy",
+        "allkeys-lru",
+      ]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    read_only: true
+    tmpfs: ["/data:uid=999,gid=999,mode=0700"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 128
+    mem_limit: ${TASK_VALKEY_MEMORY_LIMIT:-320m}
+    cpus: ${TASK_VALKEY_CPU_LIMIT:-0.5}
+
+  task-core:
+    build:
+      context: .
+      dockerfile: Dockerfile.task-core
+      platforms: ["linux/amd64"]
+    platform: linux/amd64
+    image: tableai-task-core:local
+    restart: unless-stopped
+    ports:
+      - "${TASK_CORE_BIND_ADDRESS:-127.0.0.1}:${TASK_CORE_PORT:-8790}:8790"
+    depends_on:
+      task-postgres: { condition: service_healthy }
+      task-valkey: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://${TASK_POSTGRES_USER:-tableai_tasks}:${TASK_POSTGRES_PASSWORD}@task-postgres:5432/${TASK_POSTGRES_DB:-tableai_tasks}
+      REDIS_URL: redis://task-valkey:6379
+      SESSION_SIGNING_KEY: ${SESSION_SIGNING_KEY:?Set SESSION_SIGNING_KEY in .env.docker}
+      TASK_CORE_INTERNAL_TOKEN: ${TASK_CORE_INTERNAL_TOKEN:?Set TASK_CORE_INTERNAL_TOKEN in .env.docker}
+      TASK_ENCRYPTION_KEY: ${TASK_ENCRYPTION_KEY:?Set TASK_ENCRYPTION_KEY in .env.docker}
+      DEFAULT_ORGANIZATION_SLUG: ${DEFAULT_ORGANIZATION_SLUG:-tableai}
+      DEFAULT_ORGANIZATION_NAME: ${DEFAULT_ORGANIZATION_NAME:-TableAI Catalog}
+      POSTGRES_POOL_SIZE: ${TASK_POSTGRES_POOL_SIZE:-20}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 256
+    mem_limit: ${TASK_CORE_MEMORY_LIMIT:-768m}
+    cpus: ${TASK_CORE_CPU_LIMIT:-1.0}
+
   catalog:
     build:
       context: .
@@ -8,6 +86,8 @@ services:
     platform: linux/amd64
     image: tableai-catalog:local
     restart: unless-stopped
+    depends_on:
+      task-core: { condition: service_healthy }
     ports:
       - "${TABLEAI_BIND_ADDRESS:-127.0.0.1}:${TABLEAI_PORT:-8787}:8787"
     environment:
@@ -21,10 +101,19 @@ services:
       CONTENT_KEY_VERSION: ${CONTENT_KEY_VERSION:-v1}
       INTERNAL_MONITOR_TOKEN: ${INTERNAL_MONITOR_TOKEN:?Set INTERNAL_MONITOR_TOKEN in .env.docker or the shell}
       LOCAL_SCAN_ROOT: ${LOCAL_SCAN_ROOT:-/Users/af/cpro01}
+      SESSION_SIGNING_KEY: ${SESSION_SIGNING_KEY:?Set SESSION_SIGNING_KEY in .env.docker}
+      TASK_CORE_URL: http://task-core:8790
+      TASK_CORE_INTERNAL_TOKEN: ${TASK_CORE_INTERNAL_TOKEN:?Set TASK_CORE_INTERNAL_TOKEN in .env.docker}
     volumes:
       - tableai_data:/data
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
       interval: 15s
       timeout: 5s
       retries: 8
@@ -65,7 +154,13 @@ services:
     mem_limit: 128m
     cpus: 0.25
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:2375/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:2375/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -130,7 +225,13 @@ services:
     mem_limit: ${TABLEAI_SYNC_MEMORY_LIMIT:-512m}
     cpus: ${TABLEAI_SYNC_CPU_LIMIT:-0.75}
     healthcheck:
-      test: ["CMD", "node", "-e", "const fs=require('fs');const age=Date.now()-fs.statSync('/data/assets/last-success').mtimeMs;process.exit(age<18000000?0:1)"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs=require('fs');const age=Date.now()-fs.statSync('/data/assets/last-success').mtimeMs;process.exit(age<18000000?0:1)",
+        ]
       interval: 5m
       timeout: 10s
       retries: 2
@@ -172,7 +273,13 @@ services:
     mem_limit: 128m
     cpus: 0.25
     healthcheck:
-      test: ["CMD", "node", "-e", "const fs=require('fs');const age=Date.now()-fs.statSync('/data/monitor/last-success').mtimeMs;process.exit(age<900000?0:1)"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs=require('fs');const age=Date.now()-fs.statSync('/data/monitor/last-success').mtimeMs;process.exit(age<900000?0:1)",
+        ]
       interval: 2m
       timeout: 10s
       retries: 2
@@ -185,3 +292,4 @@ services:
 
 volumes:
   tableai_data:
+  task_postgres_data:
