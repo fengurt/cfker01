@@ -37,7 +37,15 @@
   document.addEventListener("focusin",event=>{const node=candidate(event.target);if(node)show(node);});
   document.addEventListener("focusout",event=>{if(active&&!active.contains(event.relatedTarget))hide();});
   window.addEventListener("resize",()=>hide(),{passive:true});
-  helpButton.addEventListener("click",()=>{renderHelp();if(!help.open)help.showModal();});
+  document.addEventListener("click",event=>{
+    const button=event.target instanceof Element?event.target.closest('dialog button[value="cancel"]'):null;
+    const dialog=button?.closest("dialog");
+    if(!(dialog instanceof HTMLDialogElement)||!dialog.open)return;
+    event.preventDefault();
+    dialog.close(button.value||"cancel");
+  },true);
+  function openHelp(){if(document.querySelector("dialog[open]"))return;renderHelp();help.showModal();}
+  helpButton.addEventListener("click",openHelp);
   workspaces.forEach((id,index)=>document.getElementById(id)?.setAttribute("aria-keyshortcuts",`Alt+${index+1}`));
   document.querySelectorAll('input[type="search"]').forEach(input=>input.setAttribute("aria-keyshortcuts","/"));
   document.getElementById("language")?.addEventListener("click",()=>helpButton.setAttribute("aria-label",copy().help));
@@ -45,7 +53,7 @@
     if(event.key==="Escape"&&help.open){help.close();helpButton.focus();return;}
     if(event.altKey&&/^Digit[1-5]$/.test(event.code)){if(!dashboardReady())return;event.preventDefault();const button=document.getElementById(workspaces[Number(event.code.at(-1))-1]);button?.click();button?.focus();return;}
     if(editable(event.target))return;
-    if(event.key==="?"){event.preventDefault();renderHelp();if(!help.open)help.showModal();return;}
+    if(event.key==="?"){event.preventDefault();openHelp();return;}
     if(event.key==="/"){if(!dashboardReady())return;event.preventDefault();const visible=["tasks-view","projects-view","servers-view","cloud-view","repositories-view"].map(id=>document.getElementById(id)).find(node=>node&&!node.hidden);let search=visible?.querySelector('input[type="search"]');if(!(search instanceof HTMLElement)){document.getElementById("manage-projects")?.click();search=document.querySelector('#project-filters input[type="search"]');}if(search instanceof HTMLElement)search.focus();return;}
   });
 })();
