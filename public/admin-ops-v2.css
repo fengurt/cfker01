@@ -91,6 +91,14 @@
 .infrastructure-asset-row a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
 .infrastructure-asset-row small{color:var(--muted);font:600 .6rem/1.25 ui-monospace,SFMono-Regular,monospace;text-align:right}
 .infrastructure-asset-empty{margin:0;color:var(--muted);font-size:.7rem}
+.cloud-resource-section{margin:0 0 16px;padding:0 0 12px;border:1px solid var(--line);border-radius:11px;background:var(--panel-subtle);overflow:hidden}
+.cloud-resource-heading{display:flex;align-items:start;justify-content:space-between;gap:18px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.cloud-resource-heading h2{margin:2px 0 0;font-size:.92rem;letter-spacing:-.012em}
+.cloud-resource-heading>p{max-width:440px;margin:0;color:var(--muted);font-size:.68rem;line-height:1.45;text-align:right}
+.cloud-resource-section .asset-summary{margin:12px 12px 10px}
+.cloud-resource-section .asset-filters{margin:0 12px 10px}
+.cloud-resource-section .asset-table{margin:0 12px}
+.cloud-resource-section .pagination{margin:10px 12px 0}
 .fleet-overview{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(300px,.85fr);gap:10px;margin:0 0 16px}
 .fleet-health-panel,.fleet-capacity-panel,.fleet-coverage-panel{min-width:0;border:1px solid var(--line);border-radius:11px;background:var(--panel);overflow:hidden}
 .fleet-health-panel{padding:15px 16px 14px}
@@ -170,6 +178,8 @@
   .infrastructure-resource-heading{align-items:start;flex-direction:column;gap:5px}
   .infrastructure-resource-heading p{text-align:left}
   .infrastructure-resource-grid{grid-template-columns:1fr}
+  .cloud-resource-heading{align-items:start;flex-direction:column;gap:5px}
+  .cloud-resource-heading>p{text-align:left}
   .server-toolbar .server-view-summary{grid-template-columns:1fr 1fr}
   .server-toolbar .server-view-summary>div:nth-child(2n){border-right:0}
   .server-toolbar .server-view-summary>div:nth-child(-n+4){border-bottom:1px solid var(--line)}

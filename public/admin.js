@@ -7,7 +7,7 @@ const translations = {
     logout: "退出",
     loginTitle: "系统管理员登录",
     loginHelp:
-      "使用手机号码和密码登录。会话保存在安全的 HttpOnly Cookie 中，有效期八小时。",
+      "使用手机号码和密码登录。可信设备会通过安全的 HttpOnly Cookie 保持登录 90 天，并在使用时自动续期。",
     phone: "手机号码",
     password: "密码",
     login: "登录",
@@ -16,7 +16,11 @@ const translations = {
     projects: "项目",
     servers: "服务器",
     serversDeployments: "服务器与部署",
+    resourceMonitoring: "资源监控",
     cloudResources: "云资源",
+    cloudInventory: "云资源清单",
+    cloudInventoryHelp:
+      "统一筛选腾讯云、Cloudflare、GoDaddy 与链上域名资源。",
     repositories: "仓库",
     region: "地域",
     onlineServers: "在线",
@@ -87,7 +91,7 @@ const translations = {
     logout: "Sign out",
     loginTitle: "System admin login",
     loginHelp:
-      "Sign in with a phone number and password. The secure HttpOnly session lasts eight hours.",
+      "Sign in with a phone number and password. A trusted device stays signed in with a secure HttpOnly cookie for 90 days and renews while in use.",
     phone: "Phone number",
     password: "Password",
     login: "Sign in",
@@ -97,7 +101,11 @@ const translations = {
     projects: "Projects",
     servers: "Servers",
     serversDeployments: "Servers & deployments",
+    resourceMonitoring: "Resource monitoring",
     cloudResources: "Cloud resources",
+    cloudInventory: "Cloud inventory",
+    cloudInventoryHelp:
+      "Filter Tencent Cloud, Cloudflare, GoDaddy, and on-chain domain assets in one place.",
     repositories: "Repositories",
     region: "Region",
     onlineServers: "Online",
@@ -265,14 +273,18 @@ function showDashboard() {
 }
 async function boot() {
   applyLocale();
+  let session;
   try {
-    const session = await request("/admin/session");
-    $("#admin-role").textContent = session.phone || session.role;
-    showDashboard();
-    await Promise.all([loadSourceStatus(), loadServers()]);
+    session = await request("/admin/session");
   } catch {
-    showLogin();
+    return showLogin();
   }
+  $("#admin-role").textContent = session.phone || session.role;
+  showDashboard();
+  await Promise.all([
+    loadSourceStatus(),
+    loadResourceMonitoring().catch((error) => setNotice(error.message, true)),
+  ]);
 }
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -293,7 +305,10 @@ $("#login-form").addEventListener("submit", async (event) => {
     $("#admin-password").value = "";
     $("#admin-role").textContent = body.phone || "system_admin";
     showDashboard();
-    await loadSourceStatus();
+    await Promise.all([
+      loadSourceStatus(),
+      loadResourceMonitoring().catch((error) => setNotice(error.message, true)),
+    ]);
   } catch (error) {
     $("#login-error").textContent = error.message;
   } finally {
@@ -697,29 +712,25 @@ async function loadServers() {
   renderServers();
   await loadExpiringResources();
 }
+async function loadResourceMonitoring() {
+  await Promise.all([loadServers(), loadAssetSummary(), loadCloudAssets()]);
+}
 function switchWorkspace(view) {
-  for (const name of [
-    "tasks",
-    "projects",
-    "servers",
-    "cloud",
-    "repositories",
-  ]) {
-    $("#" + name + "-view").hidden = name !== view;
+  const normalizedView = view === "cloud" ? "servers" : view;
+  for (const name of ["tasks", "projects", "servers", "repositories"]) {
+    $("#" + name + "-view").hidden = name !== normalizedView;
     document
       .querySelector(`[data-view="${name}"]`)
-      ?.classList.toggle("active", name === view);
+      ?.classList.toggle("active", name === normalizedView);
   }
-  if (view === "tasks") window.loadTaskWorkspace?.();
-  if (view === "projects")
+  if (normalizedView === "tasks") window.loadTaskWorkspace?.();
+  if (normalizedView === "projects")
     loadProjects().catch((error) => setNotice(error.message, true));
-  if (view === "servers")
-    loadServers().catch((error) => setNotice(error.message, true));
-  if (view === "cloud")
-    Promise.all([loadAssetSummary(), loadCloudAssets()]).catch((error) =>
+  if (normalizedView === "servers")
+    loadResourceMonitoring().catch((error) =>
       setNotice(error.message, true),
     );
-  if (view === "repositories")
+  if (normalizedView === "repositories")
     Promise.all([loadAssetSummary(), loadRepositoryAssets()]).catch((error) =>
       setNotice(error.message, true),
     );
@@ -731,7 +742,6 @@ $("#manage-projects").addEventListener("click", () =>
 $("#manage-servers").addEventListener("click", () =>
   switchWorkspace("servers"),
 );
-$("#manage-cloud").addEventListener("click", () => switchWorkspace("cloud"));
 $("#manage-repositories").addEventListener("click", () =>
   switchWorkspace("repositories"),
 );

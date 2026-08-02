@@ -2,10 +2,10 @@
   const tooltip=document.getElementById("interaction-tooltip"),help=document.getElementById("shortcut-dialog"),helpButton=document.getElementById("shortcut-help");
   if(!tooltip||!help||!helpButton)return;
   const mac=/Mac|iPhone|iPad/.test(navigator.platform),meta=mac?"⌘":"Ctrl",alt=mac?"⌥":"Alt";
-  const workspaces=["manage-tasks","manage-projects","manage-servers","manage-cloud","manage-repositories"];
+  const workspaces=["manage-tasks","manage-projects","manage-servers","manage-repositories"];
   const labels={
-    "zh-CN":{open:"打开",newTab:"新标签打开",details:"查看详情",server:"查看服务器",switchView:"切换视图",toggle:"展开或收起",activate:"执行操作",search:"聚焦当前视图搜索",newTask:"新建任务",help:"快捷键帮助",language:"切换语言",close:"关闭弹窗",sections:["任务","项目","服务器与部署","云资源","仓库"]},
-    en:{open:"Open",newTab:"Open in new tab",details:"View details",server:"View server",switchView:"Switch view",toggle:"Expand or collapse",activate:"Run action",search:"Focus current search",newTask:"New task",help:"Keyboard shortcuts",language:"Switch language",close:"Close dialog",sections:["Tasks","Projects","Servers and deployments","Cloud resources","Repositories"]}
+    "zh-CN":{open:"打开",newTab:"新标签打开",details:"查看详情",server:"查看服务器",switchView:"切换视图",toggle:"展开或收起",activate:"执行操作",search:"聚焦当前视图搜索",newTask:"新建任务",help:"快捷键帮助",language:"切换语言",close:"关闭弹窗",sections:["任务","项目","资源监控","仓库"]},
+    en:{open:"Open",newTab:"Open in new tab",details:"View details",server:"View server",switchView:"Switch view",toggle:"Expand or collapse",activate:"Run action",search:"Focus current search",newTask:"New task",help:"Keyboard shortcuts",language:"Switch language",close:"Close dialog",sections:["Tasks","Projects","Resource monitoring","Repositories"]}
   };
   function copy(){return labels[document.documentElement.lang==="en"?"en":"zh-CN"];}
   function shortcutRows(){const text=copy();return [[`${meta} K`,text.newTask],["/",text.search],...text.sections.map((name,index)=>[`${alt} ${index+1}`,name]),["?",text.help],["Esc",text.close]];}
@@ -51,9 +51,9 @@
   document.getElementById("language")?.addEventListener("click",()=>helpButton.setAttribute("aria-label",copy().help));
   document.addEventListener("keydown",event=>{
     if(event.key==="Escape"&&help.open){help.close();helpButton.focus();return;}
-    if(event.altKey&&/^Digit[1-5]$/.test(event.code)){if(!dashboardReady())return;event.preventDefault();const button=document.getElementById(workspaces[Number(event.code.at(-1))-1]);button?.click();button?.focus();return;}
+    if(event.altKey&&/^Digit[1-4]$/.test(event.code)){if(!dashboardReady())return;event.preventDefault();const button=document.getElementById(workspaces[Number(event.code.at(-1))-1]);button?.click();button?.focus();return;}
     if(editable(event.target))return;
     if(event.key==="?"){event.preventDefault();openHelp();return;}
-    if(event.key==="/"){if(!dashboardReady())return;event.preventDefault();const visible=["tasks-view","projects-view","servers-view","cloud-view","repositories-view"].map(id=>document.getElementById(id)).find(node=>node&&!node.hidden);let search=visible?.querySelector('input[type="search"]');if(!(search instanceof HTMLElement)){document.getElementById("manage-projects")?.click();search=document.querySelector('#project-filters input[type="search"]');}if(search instanceof HTMLElement)search.focus();return;}
+    if(event.key==="/"){if(!dashboardReady())return;event.preventDefault();const visible=["tasks-view","projects-view","servers-view","repositories-view"].map(id=>document.getElementById(id)).find(node=>node&&!node.hidden);let search=visible?.querySelector('input[type="search"]');if(!(search instanceof HTMLElement)){document.getElementById("manage-projects")?.click();search=document.querySelector('#project-filters input[type="search"]');}if(search instanceof HTMLElement)search.focus();return;}
   });
 })();
