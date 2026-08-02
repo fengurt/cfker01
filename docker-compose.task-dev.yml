@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: tableai_tasks
+      POSTGRES_USER: tableai_tasks
+      POSTGRES_PASSWORD: ${TASK_POSTGRES_PASSWORD}
+    volumes:
+      - task_postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tableai_tasks -d tableai_tasks"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey:8-bookworm
+    user: "999:999"
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    tmpfs: ["/data:uid=999,gid=999,mode=0700"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  task-core:
+    build:
+      context: .
+      dockerfile: Dockerfile.task-core
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://tableai_tasks:${TASK_POSTGRES_PASSWORD}@postgres:5432/tableai_tasks
+      REDIS_URL: redis://valkey:6379
+      SESSION_SIGNING_KEY: ${SESSION_SIGNING_KEY}
+      TASK_CORE_INTERNAL_TOKEN: ${TASK_CORE_INTERNAL_TOKEN}
+      TASK_ENCRYPTION_KEY: ${TASK_ENCRYPTION_KEY}
+    ports:
+      - "127.0.0.1:${TASK_CORE_DEV_PORT}:8790"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  task_postgres_dev_data:

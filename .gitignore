@@ -5,6 +5,7 @@ node_modules/
 .env.local
 .env.cloud
 .env.docker
+.task-migration/
 .env.1password
 .cos.yaml
 .cursor/

@@ -52,4 +52,8 @@ done
 
 rm -f "${PORT_FILE}" "${URL_FILE}"
 
+if command -v docker >/dev/null 2>&1 && [[ -f "${ROOT}/docker-compose.task-dev.yml" ]]; then
+  docker compose -p tableai-task-dev -f "${ROOT}/docker-compose.task-dev.yml" down >/dev/null 2>&1 || true
+fi
+
 echo "stopped"
