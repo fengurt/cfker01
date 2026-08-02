@@ -1,7 +1,9 @@
 import { hashPassword, verifyPassword } from "./crypto";
 
 const SESSION_NAME = "tableai_admin";
+const DEVICE_NAME = "tableai_admin_device";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
+const DEVICE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const LOCK_SECONDS = 15 * 60;
 
 export async function requireAdminToken(request: Request, env: Env): Promise<Response | null> {
@@ -13,9 +15,13 @@ export async function requireAdminToken(request: Request, env: Env): Promise<Res
 }
 
 export async function readAdminSession(request:Request,env:Env):Promise<{userId:string;phone:string;role:string}|null>{
-  if(!env.ADMIN_TOKEN)return null;const cookie=request.headers.get("Cookie")?.split(";").map((part)=>part.trim()).find((part)=>part.startsWith(`${SESSION_NAME}=`))?.slice(SESSION_NAME.length+1);if(!cookie)return null;
-  const [payload,signature]=cookie.split(".");if(!payload||!signature||!await timingSafeEqual(signature,await sign(payload,env.ADMIN_TOKEN)))return null;
-  try{const value=JSON.parse(decodeText(payload)) as {uid?:string;phone?:string;role?:string;exp?:number};if(!value.uid||!value.phone||value.role!=="system_admin"||!value.exp||value.exp<=Math.floor(Date.now()/1000))return null;return{userId:value.uid,phone:value.phone,role:value.role};}catch{return null;}
+  if(!env.ADMIN_TOKEN)return null;
+  const cookie=cookieValue(request,SESSION_NAME);
+  if(cookie){
+    const [payload,signature]=cookie.split(".");
+    if(payload&&signature&&await timingSafeEqual(signature,await sign(payload,env.ADMIN_TOKEN)))try{const value=JSON.parse(decodeText(payload)) as {uid?:string;phone?:string;role?:string;exp?:number};if(value.uid&&value.phone&&value.role==="system_admin"&&value.exp&&value.exp>Math.floor(Date.now()/1000))return{userId:value.uid,phone:value.phone,role:value.role};}catch{}
+  }
+  return readTrustedDevice(request,env);
 }
 
 export async function createAdminSession(request:Request,env:Env,ctx:ExecutionContext):Promise<Response>{
@@ -36,7 +42,11 @@ export async function createAdminSession(request:Request,env:Env,ctx:ExecutionCo
   if(!await verifyPassword(password,user.password_hash,user.password_salt,user.password_iterations)){const failed=user.failed_attempts+1;const locked=failed>=5?new Date(now+LOCK_SECONDS*1000).toISOString():null;await env.MGMT_DB.prepare(`UPDATE admin_users SET failed_attempts=?1,locked_until=?2,updated_at=?3 WHERE id=?4`).bind(failed,locked,new Date(now).toISOString(),user.id).run();ctx.waitUntil(env.MGMT_KV.put(rateKey,String(attempts+1),{expirationTtl:900}));return Response.json({error:locked?"account_locked":"invalid_credentials"},{status:locked?423:401});}
   const timestamp=new Date(now).toISOString();await env.MGMT_DB.prepare(`UPDATE admin_users SET failed_attempts=0,locked_until=NULL,last_login_at=?1,updated_at=?1 WHERE id=?2`).bind(timestamp,user.id).run();
   const expiresAt=Math.floor(now/1000)+SESSION_TTL_SECONDS;const payload=encodeText(JSON.stringify({uid:user.id,phone:user.phone_e164,role:user.role,exp:expiresAt}));const signature=await sign(payload,env.ADMIN_TOKEN);
-  return Response.json({ok:true,role:user.role,phone:user.phone_e164,expiresAt:new Date(expiresAt*1000).toISOString()},{headers:{"Set-Cookie":sessionCookie(`${payload}.${signature}`,SESSION_TTL_SECONDS,request,env),"Cache-Control":"no-store"}});
+  const deviceToken=token(),deviceExpiresAt=new Date(now+DEVICE_TTL_SECONDS*1000).toISOString();
+  await env.MGMT_DB.prepare(`UPDATE admin_device_sessions SET revoked_at=?1 WHERE user_id=?2 AND ip_prefix=?3 AND user_agent_hash=?4 AND revoked_at IS NULL`).bind(timestamp,user.id,ipPrefix(request),await userAgentHash(request,env)).run();
+  await env.MGMT_DB.prepare(`INSERT INTO admin_device_sessions(id,user_id,token_hash,ip_prefix,user_agent_hash,expires_at,last_seen_at,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)`).bind(crypto.randomUUID(),user.id,await sign(deviceToken,env.ADMIN_TOKEN),ipPrefix(request),await userAgentHash(request,env),deviceExpiresAt,timestamp).run();
+  const headers=new Headers({"Cache-Control":"no-store"});headers.append("Set-Cookie",sessionCookie(`${payload}.${signature}`,SESSION_TTL_SECONDS,request,env));headers.append("Set-Cookie",deviceCookie(deviceToken,DEVICE_TTL_SECONDS,request,env));
+  return Response.json({ok:true,role:user.role,phone:user.phone_e164,expiresAt:new Date(expiresAt*1000).toISOString(),deviceExpiresAt},{headers});
 }
 
 export async function bootstrapAdmin(request:Request,env:Env):Promise<Response>{
@@ -46,7 +56,10 @@ export async function bootstrapAdmin(request:Request,env:Env):Promise<Response>{
   const passwordRecord=await hashPassword(password);const now=new Date().toISOString();const id=crypto.randomUUID();await env.MGMT_DB.prepare(`INSERT INTO admin_users(id,phone_e164,password_hash,password_salt,password_iterations,role,active,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,'system_admin',1,?6,?6)`).bind(id,phone,passwordRecord.hash,passwordRecord.salt,passwordRecord.iterations,now).run();return Response.json({ok:true,id,phone},{status:201});
 }
 
-export function clearAdminSession(request:Request,env?:Env):Response{return Response.json({ok:true},{headers:{"Set-Cookie":sessionCookie("",0,request,env),"Cache-Control":"no-store"}});}
+export async function clearAdminSession(request:Request,env?:Env):Promise<Response>{
+  const device=cookieValue(request,DEVICE_NAME);if(device&&env?.ADMIN_TOKEN)await env.MGMT_DB.prepare(`UPDATE admin_device_sessions SET revoked_at=?1 WHERE token_hash=?2 AND revoked_at IS NULL`).bind(new Date().toISOString(),await sign(device,env.ADMIN_TOKEN)).run();
+  const headers=new Headers({"Cache-Control":"no-store"});headers.append("Set-Cookie",sessionCookie("",0,request,env));headers.append("Set-Cookie",deviceCookie("",0,request,env));return Response.json({ok:true},{headers});
+}
 export function normalizePhone(value:string){const digits=value.replace(/\D/g,"");if(/^1\d{10}$/.test(digits))return`+86${digits}`;if(/^861\d{10}$/.test(digits))return`+${digits}`;if(/^\d{8,15}$/.test(digits))return`+${digits}`;return null;}
 export function isValidRequestOrigin(request:Request){
   const origin=request.headers.get("Origin");if(!origin)return true;
@@ -58,8 +71,17 @@ export function isValidRequestOrigin(request:Request){
 }
 type AdminUser={id:string;phone_e164:string;password_hash:string;password_salt:string;password_iterations:number;role:string;active:number;failed_attempts:number;locked_until:string|null};
 function findAdminByPhone(env:Env,phone:string){return env.MGMT_DB.prepare(`SELECT id,phone_e164,password_hash,password_salt,password_iterations,role,active,failed_attempts,locked_until FROM admin_users WHERE phone_e164=?1`).bind(phone).first<AdminUser>();}
+async function readTrustedDevice(request:Request,env:Env):Promise<{userId:string;phone:string;role:string}|null>{
+  const raw=cookieValue(request,DEVICE_NAME);if(!raw||!env.ADMIN_TOKEN)return null;const row=await env.MGMT_DB.prepare(`SELECT d.user_agent_hash,u.id,u.phone_e164,u.role,u.active FROM admin_device_sessions d JOIN admin_users u ON u.id=d.user_id WHERE d.token_hash=?1 AND d.revoked_at IS NULL AND datetime(d.expires_at)>CURRENT_TIMESTAMP`).bind(await sign(raw,env.ADMIN_TOKEN)).first<{user_agent_hash:string|null;id:string;phone_e164:string;role:string;active:number}>();
+  if(!row||!row.active||row.role!=="system_admin"||row.user_agent_hash!==await userAgentHash(request,env))return null;return{userId:row.id,phone:row.phone_e164,role:row.role};
+}
 async function canBootstrapLocalAdmin(request:Request,env:Env){const url=new URL(request.url);if(env.ENVIRONMENT!=="development"||!(url.hostname==="127.0.0.1"||url.hostname==="localhost"||url.hostname==="::1"))return false;const count=await env.MGMT_DB.prepare(`SELECT COUNT(*) AS count FROM admin_users`).first<{count:number}>();return(count?.count??0)===0;}
 async function sign(payload:string,secret:string){const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);return encodeBytes(new Uint8Array(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(payload))));}
 function sessionCookie(value:string,maxAge:number,request:Request,env?:Env){const forwarded=request.headers.get("X-Forwarded-Proto")?.split(",",1)[0]?.trim().toLowerCase();const secure=new URL(request.url).protocol==="https:"||forwarded==="https"||env?.COOKIE_SECURE==="true"?"; Secure":"";return`${SESSION_NAME}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;}
+function deviceCookie(value:string,maxAge:number,request:Request,env?:Env){const forwarded=request.headers.get("X-Forwarded-Proto")?.split(",",1)[0]?.trim().toLowerCase();const secure=new URL(request.url).protocol==="https:"||forwarded==="https"||env?.COOKIE_SECURE==="true"?"; Secure":"";return`${DEVICE_NAME}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;}
+function cookieValue(request:Request,name:string){return request.headers.get("Cookie")?.split(";").map(part=>part.trim()).find(part=>part.startsWith(`${name}=`))?.slice(name.length+1)??null;}
+function token(){const bytes=new Uint8Array(32);crypto.getRandomValues(bytes);return encodeBytes(bytes);}
+async function userAgentHash(request:Request,env:Env){return sign(request.headers.get("User-Agent")??"",env.ADMIN_TOKEN??"");}
+function ipPrefix(request:Request){const ip=request.headers.get("CF-Connecting-IP")??"local";if(ip.includes(":"))return ip.split(":").slice(0,4).join(":")+"::/64";const bits=ip.split(".");return bits.length===4?`${bits.slice(0,3).join(".")}.0/24`:ip;}
 async function timingSafeEqual(left:string,right:string){const a=new TextEncoder().encode(left),b=new TextEncoder().encode(right),length=Math.max(a.length,b.length,1);let difference=a.length^b.length;for(let index=0;index<length;index+=1)difference|=(a[index%Math.max(a.length,1)]??0)^(b[index%Math.max(b.length,1)]??0);return difference===0;}
 function encodeText(value:string){return encodeBytes(new TextEncoder().encode(value));}function encodeBytes(bytes:Uint8Array){let binary="";for(const byte of bytes)binary+=String.fromCharCode(byte);return btoa(binary).replaceAll("+","-").replaceAll("/","_").replaceAll("=","");}function decodeText(value:string){const padded=value.replaceAll("-","+").replaceAll("_","/")+"===".slice((value.length+3)%4);return new TextDecoder().decode(Uint8Array.from(atob(padded),(char)=>char.charCodeAt(0)));}

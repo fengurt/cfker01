@@ -31,7 +31,7 @@ export async function handleRequest(
 
   if (pathname === "/admin/login" && request.method === "POST") return createAdminSession(request, env, ctx);
   if (pathname === "/admin/bootstrap" && request.method === "POST") return bootstrapAdmin(request, env);
-  if (pathname === "/admin/logout" && request.method === "POST") return clearAdminSession(request, env);
+  if (pathname === "/admin/logout" && request.method === "POST") return await clearAdminSession(request, env);
   if (pathname === "/admin/session" && request.method === "GET") {
     const auth = await requireAdminToken(request, env); if(auth)return auth;const session=await readAdminSession(request,env);return jsonResponse({ok:true,role:session?.role??"system_admin",phone:session?.phone??null});
   }
