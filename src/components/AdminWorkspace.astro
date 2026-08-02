@@ -27,7 +27,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
       <section class="login-panel" id="login-panel">
         <form id="login-form">
           <p class="kicker">ADMIN / 管理员</p><h1 data-i18n="loginTitle">系统管理员登录</h1>
-          <p data-i18n="loginHelp">使用手机号码和密码登录。会话保存在安全的 HttpOnly Cookie 中，有效期八小时。</p>
+          <p data-i18n="loginHelp">使用手机号码和密码登录。可信设备会通过安全的 HttpOnly Cookie 保持登录 90 天，并在使用时自动续期。</p>
           <label><span data-i18n="phone">手机号码</span><input id="admin-phone" type="tel" inputmode="tel" autocomplete="username" required /></label>
           <label><span data-i18n="password">密码</span><input id="admin-password" type="password" autocomplete="current-password" required /></label>
           <p class="form-error" id="login-error" role="alert"></p><button class="primary" type="submit" data-i18n="login">登录</button>

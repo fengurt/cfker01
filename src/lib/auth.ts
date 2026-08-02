@@ -3,7 +3,7 @@ import { hashPassword, verifyPassword } from "./crypto";
 const SESSION_NAME = "tableai_admin";
 const DEVICE_NAME = "tableai_admin_device";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
-const DEVICE_TTL_SECONDS = 60 * 60 * 24 * 30;
+const DEVICE_TTL_SECONDS = 60 * 60 * 24 * 90;
 const LOCK_SECONDS = 15 * 60;
 
 export async function requireAdminToken(
@@ -64,7 +64,8 @@ export async function refreshAdminSession(
   const session = await readAdminSession(request, env);
   if (!session)
     return Response.json({ error: "unauthorized" }, { status: 401 });
-  const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+  const now = Date.now(),
+    expiresAt = Math.floor(now / 1000) + SESSION_TTL_SECONDS,
     payload = encodeText(
       JSON.stringify({
         uid: session.userId,
@@ -79,12 +80,33 @@ export async function refreshAdminSession(
     "Set-Cookie",
     sessionCookie(`${payload}.${signature}`, SESSION_TTL_SECONDS, request, env),
   );
+  const deviceToken = cookieValue(request, DEVICE_NAME);
+  let deviceExpiresAt: string | null = null;
+  if (deviceToken && env.ADMIN_TOKEN) {
+    deviceExpiresAt = new Date(now + DEVICE_TTL_SECONDS * 1000).toISOString();
+    const refreshed = await env.MGMT_DB.prepare(
+      `UPDATE admin_device_sessions SET ip_prefix=?1,last_seen_at=?2,expires_at=?3 WHERE token_hash=?4 AND revoked_at IS NULL`,
+    )
+      .bind(
+        ipPrefix(request),
+        new Date(now).toISOString(),
+        deviceExpiresAt,
+        await sign(deviceToken, env.ADMIN_TOKEN),
+      )
+      .run();
+    if ((refreshed.meta?.changes ?? 0) > 0)
+      headers.append(
+        "Set-Cookie",
+        deviceCookie(deviceToken, DEVICE_TTL_SECONDS, request, env),
+      );
+  }
   return Response.json(
     {
       ok: true,
       role: session.role,
       phone: session.phone,
       expiresAt: new Date(expiresAt * 1000).toISOString(),
+      deviceExpiresAt,
     },
     { headers },
   );
