@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decryptDocument, encryptDocument, hashPassword, verifyPassword } from "../src/lib/crypto";
+import { decode, decryptDocument, encode, encryptDocument, hashPassword, verifyPassword } from "../src/lib/crypto";
 
 const key = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 
@@ -19,7 +19,9 @@ describe("resource security primitives", () => {
     expect(first.nonce).not.toBe(second.nonce);
     expect(first.ciphertext).not.toContain("secret note");
     expect(await decryptDocument(first.ciphertext, first.nonce, key, "project-1", "content_md", "v1")).toContain("secret note");
-    const tampered = `${first.ciphertext.slice(0, -2)}AA`;
+    const tamperedBytes = decode(first.ciphertext);
+    tamperedBytes[0] ^= 0x01;
+    const tampered = encode(tamperedBytes);
     await expect(decryptDocument(tampered, first.nonce, key, "project-1", "content_md", "v1")).rejects.toThrow();
     await expect(decryptDocument(first.ciphertext, first.nonce, key, "project-2", "content_md", "v1")).rejects.toThrow();
   });
