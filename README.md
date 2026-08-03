@@ -71,6 +71,8 @@ npm run d1:migrate:remote
 
 Catalog content lives in `src/content/`. See [docs/content-contributing.md](./docs/content-contributing.md) before adding or changing records.
 
+The resource-operations product contract, glossary, decisions, and release acceptance checklist live in [docs/resource-operations-spec.md](./docs/resource-operations-spec.md), [CONTEXT.md](./CONTEXT.md), and [docs/resource-operations-acceptance.md](./docs/resource-operations-acceptance.md). Run `npm run ops:validate` before changing operational behavior.
+
 ## Project inventory and admin GUI
 
 Scan local projects, repositories, skills, and agent resources:
