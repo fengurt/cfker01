@@ -358,7 +358,11 @@ export function isValidRequestOrigin(request: Request) {
   try {
     const requestUrl = new URL(request.url),
       originUrl = new URL(origin);
-    const host = request.headers.get("Host") ?? requestUrl.host;
+    const forwardedHost = request.headers
+        .get("X-Forwarded-Host")
+        ?.split(",", 1)[0]
+        ?.trim(),
+      host = forwardedHost || request.headers.get("Host") || requestUrl.host;
     const forwarded = request.headers
       .get("X-Forwarded-Proto")
       ?.split(",", 1)[0]
@@ -368,7 +372,7 @@ export function isValidRequestOrigin(request: Request) {
       forwarded === "https" || forwarded === "http"
         ? forwarded
         : requestUrl.protocol.slice(0, -1);
-    return originUrl.origin === `${protocol}://${host}`;
+    return originUrl.origin === new URL(`${protocol}://${host}`).origin;
   } catch {
     return false;
   }
