@@ -69,6 +69,7 @@ npm run build               # validate and generate static catalog
 npm run check               # wrangler check + tsc
 npm run deploy:staging
 npm run deploy:production
+npm run deploy:amd          # immutable Git archive to the configured AMD Docker host
 npm run tail
 npm run d1:migrate:local
 npm run d1:migrate:remote

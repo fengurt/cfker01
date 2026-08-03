@@ -12,6 +12,7 @@
     "deploy": "npm run deploy:staging",
     "deploy:staging": "./scripts/cf-deploy.sh staging",
     "deploy:production": "./scripts/cf-deploy.sh production",
+    "deploy:amd": "./scripts/deploy-amd.sh",
     "check": "npm run content:validate && astro check && tsc --noEmit && wrangler deploy --dry-run --env staging",
     "types": "wrangler types",
     "tail": "wrangler tail",
