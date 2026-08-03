@@ -36,6 +36,13 @@
     priority: "优先级",
     strategicValue: "战略价值",
     createTask: "创建任务",
+    creatingTask: "创建中…",
+    quickTaskIntro: "先写清结果，其余信息可以稍后补充。",
+    quickTaskPlaceholder: "例如：完成资源监控告警接入",
+    taskDetailsOptional: "补充信息",
+    optional: "可选",
+    enterToCreate: "创建",
+    escapeToClose: "关闭",
     startDate: "开始日期",
     confidence: "置信度 %",
     dependencies: "前置依赖",
@@ -83,6 +90,13 @@
     priority: "Priority",
     strategicValue: "Strategic value",
     createTask: "Create task",
+    creatingTask: "Creating…",
+    quickTaskIntro: "Start with the outcome. Add the details now or later.",
+    quickTaskPlaceholder: "e.g. Connect resource-monitoring alerts",
+    taskDetailsOptional: "Task details",
+    optional: "Optional",
+    enterToCreate: "Create",
+    escapeToClose: "Close",
     startDate: "Start date",
     confidence: "Confidence %",
     dependencies: "Dependencies",
@@ -705,6 +719,14 @@
     const form = $("#quick-task-form");
     form.reset();
     form.elements.priority.value = "2";
+    form.removeAttribute("aria-busy");
+    const submit = $("#quick-task-submit"),
+      error = $("#quick-task-error");
+    submit.disabled = false;
+    submit.querySelector("[data-submit-label]").textContent =
+      translations[locale].createTask;
+    error.hidden = true;
+    error.textContent = "";
     $("#quick-task-dialog").showModal();
     setTimeout(() => form.elements.title.focus(), 0);
   }
@@ -715,11 +737,26 @@
     event.preventDefault();
     openQuickTask();
   });
+  $("#quick-task-form").elements.title.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing || event.repeat) return;
+    event.preventDefault();
+    const form = event.currentTarget.form;
+    if (form.reportValidity()) form.requestSubmit($("#quick-task-submit"));
+  });
 
   $("#quick-task-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget,
+      submit = $("#quick-task-submit"),
+      errorNode = $("#quick-task-error"),
       body = formObject(form);
+    if (submit.disabled) return;
+    submit.disabled = true;
+    form.setAttribute("aria-busy", "true");
+    submit.querySelector("[data-submit-label]").textContent =
+      translations[locale].creatingTask;
+    errorNode.hidden = true;
+    errorNode.textContent = "";
     try {
       await request("/api/admin/v1/tasks", {
         method: "POST",
@@ -730,7 +767,15 @@
       taskNotice(locale === "zh-CN" ? "任务已创建。" : "Task created.");
       await loadTasks();
     } catch (error) {
+      errorNode.textContent = error.message;
+      errorNode.hidden = false;
       taskNotice(error.message, true);
+      form.elements.title.focus();
+    } finally {
+      submit.disabled = false;
+      form.removeAttribute("aria-busy");
+      submit.querySelector("[data-submit-label]").textContent =
+        translations[locale].createTask;
     }
   });
   $("#task-editor-form").addEventListener("submit", async (event) => {
