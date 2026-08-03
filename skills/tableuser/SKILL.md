@@ -55,6 +55,14 @@ Without `TABLEUSER_DEV_KEY`, these fail by design.
 
 ## 4. Wire the consuming app
 
+Install from **public npm** (no monorepo clone required):
+
+```bash
+npm install @tableai/uac-next @tableai/uac-react   # Next.js
+npm install @tableai/uac-express                    # Express / Hono
+npm install @tableai/uac-browser                    # SPA / static
+```
+
 | Stack | Package |
 |-------|---------|
 | Next.js App Router | `@tableai/uac-next` |
@@ -62,6 +70,7 @@ Without `TABLEUSER_DEV_KEY`, these fail by design.
 | Express / Hono | `@tableai/uac-express` |
 | Generic Node | `@tableai/uac-sdk` |
 
+Quickstart: https://github.com/fengurt/tableuser01/blob/main/docs/developers/quickstart.md  
 Docs: https://tableu.opcglobal.cn/developers/ ·  
 https://github.com/fengurt/tableuser01/tree/main/docs/developers
 
