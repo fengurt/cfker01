@@ -1,6 +1,6 @@
 ---
 name: tableuser
-description: Develop apps against Table AI Unified Identity (TableUser / UAC): discovery, Developer API, @tableai/uac-* SDKs, TAID/roles. Requires TABLEUSER_DEV_KEY for API calls (401 without). Use for TableUser, tableu.opcglobal.cn, UAC, agent-connect.
+description: "Develop apps against Table AI Unified Identity (TableUser / UAC): discovery, Developer API, @tableai/uac-* SDKs, TAID/roles. Requires TABLEUSER_DEV_KEY for API calls (401 without). Use for TableUser, tableu.opcglobal.cn, UAC, agent-connect."
 ---
 
 # TableUser (Table AI Unified Identity)
@@ -55,6 +55,14 @@ Without `TABLEUSER_DEV_KEY`, these fail by design.
 
 ## 4. Wire the consuming app
 
+Install from **public npm** (no monorepo clone required):
+
+```bash
+npm install @tableai/uac-next @tableai/uac-react   # Next.js
+npm install @tableai/uac-express                    # Express / Hono
+npm install @tableai/uac-browser                    # SPA / static
+```
+
 | Stack | Package |
 |-------|---------|
 | Next.js App Router | `@tableai/uac-next` |
@@ -62,14 +70,17 @@ Without `TABLEUSER_DEV_KEY`, these fail by design.
 | Express / Hono | `@tableai/uac-express` |
 | Generic Node | `@tableai/uac-sdk` |
 
+Quickstart: https://github.com/fengurt/tableuser01/blob/main/docs/developers/quickstart.md  
 Docs: https://tableu.opcglobal.cn/developers/ ·  
 https://github.com/fengurt/tableuser01/tree/main/docs/developers
 
 ## 5. Identity contract
 
-- Stable FK: `session.user.id` (TAID on profile APIs) — not email  
-- Roles: `platform:admin` > `org:owner` > `org:admin` > `project:admin` > `project:editor` > `project:viewer` > `external:guest`  
-- Prefer SDK helpers; do not reimplement Logto OIDC
+- Stable FK: `session.user.taid` (preferred) / `session.user.id` — not email  
+- Roles on the token are **platform-coarse labels** (`platform:admin`, `org:*`, `project:*`, `external:guest`) — not org/project membership  
+- Resource-scoped checks need a `grant` from the owning app (join by TAID); global `org:admin` must not authorize every org  
+- Prefer SDK helpers (`check` / `withUac` / `resolveGrant`); do not reimplement Logto OIDC  
+- Docs: https://github.com/fengurt/tableuser01/blob/main/docs/developers/resource-authorization.md
 
 ## 6. Admin console (ops)
 
