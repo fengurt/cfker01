@@ -31,6 +31,7 @@ umask 077
   [[ -n "${SESSION_SIGNING_KEY:-}" ]] && printf 'SESSION_SIGNING_KEY=%s\n' "$SESSION_SIGNING_KEY"
   [[ -n "${TASK_CORE_URL:-}" ]] && printf 'TASK_CORE_URL=%s\n' "$TASK_CORE_URL"
   [[ -n "${TASK_CORE_INTERNAL_TOKEN:-}" ]] && printf 'TASK_CORE_INTERNAL_TOKEN=%s\n' "$TASK_CORE_INTERNAL_TOKEN"
+  [[ -n "${PUBLIC_ORIGIN:-}" ]] && printf 'PUBLIC_ORIGIN=%s\n' "$PUBLIC_ORIGIN"
 } > .dev.vars
 
 MIGRATION_LOG="$(mktemp)"

@@ -104,6 +104,7 @@ services:
       SESSION_SIGNING_KEY: ${SESSION_SIGNING_KEY:?Set SESSION_SIGNING_KEY in .env.docker}
       TASK_CORE_URL: http://task-core:8790
       TASK_CORE_INTERNAL_TOKEN: ${TASK_CORE_INTERNAL_TOKEN:?Set TASK_CORE_INTERNAL_TOKEN in .env.docker}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
     volumes:
       - tableai_data:/data
     healthcheck:
