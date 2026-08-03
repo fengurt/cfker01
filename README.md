@@ -50,6 +50,11 @@ npm run dev:worker              # Worker and API development
 | `GET /admin/heartbeat` | Bearer | Last cron heartbeat from KV |
 | `GET /admin/audit?limit=20` | Bearer | Recent audit events from D1 |
 | `POST /admin/audit` | Bearer | Append audit event |
+| `GET /api/admin/v1/incidents` | Admin session / token | Read the deduplicated incident inbox |
+| `POST /api/admin/v1/incidents` | Operator | Open or deduplicate an incident |
+| `PATCH /api/admin/v1/incidents/:id` | Operator | Acknowledge, assign, or resolve with a version lock |
+| `GET/PATCH /api/admin/v1/deployment-requirements/:projectId` | Viewer / operator | Manage explicit deployment constraints |
+| `GET /api/admin/v1/placement-recommendations/:projectId` | Viewer | Return up to three safe placement candidates |
 | `GET /.well-known/mcp` | No | MCP server card |
 | `POST /mcp` | `X-Api-Key` | JSON-RPC (tools: `get_status`, `get_history`) |
 

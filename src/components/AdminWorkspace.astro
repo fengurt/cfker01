@@ -79,6 +79,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
           </details>
           <div class="server-toolbar"><div class="server-view-summary"><div><strong id="server-total">0</strong><span data-i18n="servers">服务器</span></div><div><strong id="server-online">0</strong><span data-i18n="healthy">健康</span></div><div><strong id="server-incidents">0</strong><span data-i18n="incidents">未恢复事件</span></div><div><strong id="server-deployments">0</strong><span data-i18n="activeDeployments">部署项目</span></div><div><strong id="server-repositories">0</strong><span data-i18n="githubRepositories">GitHub 仓库</span></div></div><button id="run-monitor" type="button" data-i18n="runMonitor">立即检查</button></div>
           <div id="monitor-status" class="monitor-status" role="status"></div>
+          <section id="incident-inbox" class="incident-inbox" aria-labelledby="incident-inbox-title"><div class="incident-inbox-heading"><div><p class="fleet-eyebrow">INBOX / 事件</p><h2 id="incident-inbox-title">需要处理</h2></div><span id="incident-inbox-summary" class="incident-inbox-summary"></span></div><div id="incident-inbox-list" aria-live="polite"></div></section>
           <section class="expiring-resource-panel" aria-labelledby="expiring-resource-title">
             <div class="expiring-resource-heading"><div><p class="fleet-eyebrow">RENEWAL / 到期预警</p><h2 id="expiring-resource-title">最近到期资源</h2></div><p>显示已验证的服务器、注册商域名与链上名称；未确认到期日的资源不会被猜测。</p></div>
             <div id="expiring-resource-list" class="expiring-resource-list" aria-live="polite"></div>

@@ -14,7 +14,7 @@ import {
   clearAdminSession,
   createAdminSession,
   refreshAdminSession,
-  requireAdminToken,
+  requireAdminRole,
 } from "./lib/auth";
 import { handleAdminResourceOps } from "./routes/admin-resource-ops";
 import { handleAdminServers } from "./routes/admin-servers";
@@ -44,7 +44,7 @@ export async function handleRequest(
   if (pathname === "/admin/logout" && request.method === "POST")
     return await clearAdminSession(request, env);
   if (pathname === "/admin/session" && request.method === "GET") {
-    const auth = await requireAdminToken(request, env);
+    const auth = await requireAdminRole(request, env, "viewer");
     if (auth) return auth;
     return refreshAdminSession(request, env);
   }

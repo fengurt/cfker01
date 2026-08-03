@@ -270,4 +270,49 @@ describe("cfker01 worker", () => {
     expect(summary.status).toBe(200);expect(await summary.json()).toMatchObject({data:{openEvents:1}});
     await waitOnExecutionContext(ctx);
   });
+
+  it("creates, deduplicates, lists, and version-locks Incidents", async () => {
+    const ctx = createExecutionContext();
+    const headers = { Authorization: `Bearer ${env.ADMIN_TOKEN}`, "Content-Type": "application/json" };
+    const input = {
+      entityType: "server",
+      entityId: "incident-test-server",
+      check: "health",
+      rootCause: "timeout",
+      title: "Incident API test",
+      summary: "A test outage for the operations contract.",
+      evidence: ["probe:timeout", "server:incident-test-server"],
+      criticalProjectDown: true,
+    };
+    const first = await worker.fetch(new Request("http://example.com/api/admin/v1/incidents", { method: "POST", headers, body: JSON.stringify(input) }), env, ctx);
+    expect(first.status).toBe(201);
+    const created = await first.json() as { data: { id: string; severity: string; version: number; task_link_status: string } };
+    expect(created.data).toMatchObject({ severity: "p1", version: 1, task_link_status: "pending" });
+    const duplicate = await worker.fetch(new Request("http://example.com/api/admin/v1/incidents", { method: "POST", headers, body: JSON.stringify({ ...input, evidence: [...input.evidence].reverse() }) }), env, ctx);
+    expect(duplicate.status).toBe(201);
+    expect((await duplicate.json() as { data: { id: string; recurrence_count: number; version: number } }).data).toMatchObject({ id: created.data.id, recurrence_count: 2, version: 2 });
+    const list = await worker.fetch(new Request("http://example.com/api/admin/v1/incidents?severity=p1", { headers }), env, ctx);
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ data: [expect.objectContaining({ id: created.data.id, severity: "p1" })] });
+    const updated = await worker.fetch(new Request(`http://example.com/api/admin/v1/incidents/${created.data.id}`, { method: "PATCH", headers, body: JSON.stringify({ version: 2, status: "acknowledged" }) }), env, ctx);
+    expect(updated.status).toBe(200);
+    const conflict = await worker.fetch(new Request(`http://example.com/api/admin/v1/incidents/${created.data.id}`, { method: "PATCH", headers, body: JSON.stringify({ version: 2, status: "resolved" }) }), env, ctx);
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ error: { code: "version_conflict" } });
+    await waitOnExecutionContext(ctx);
+  });
+
+  it("stores deployment requirements and returns safe placement recommendations", async () => {
+    const ctx = createExecutionContext();
+    const headers = { Authorization: `Bearer ${env.ADMIN_TOKEN}`, "Content-Type": "application/json" };
+    const now = new Date().toISOString();
+    await env.MGMT_DB.prepare(`INSERT OR IGNORE INTO catalog_projects(id,name,platform,source_kind,source_ref,status,visibility,discovered_at,updated_at) VALUES('placement-project','Placement project','local','manual','placement-project','active','private',?1,?1)`).bind(now).run();
+    const saved = await worker.fetch(new Request("http://example.com/api/admin/v1/deployment-requirements/placement-project", { method: "PATCH", headers, body: JSON.stringify({ architecture: "amd64", minCpu: 2, minMemoryMb: 1024, minDiskGb: 10, criticality: "critical" }) }), env, ctx);
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ data: { requirements: { architecture: "amd64", minCpu: 2, criticality: "critical" } } });
+    const recommendations = await worker.fetch(new Request("http://example.com/api/admin/v1/placement-recommendations/placement-project", { headers }), env, ctx);
+    expect(recommendations.status).toBe(200);
+    expect(await recommendations.json()).toMatchObject({ data: { projectId: "placement-project", status: "insufficient_data" } });
+    await waitOnExecutionContext(ctx);
+  });
 });

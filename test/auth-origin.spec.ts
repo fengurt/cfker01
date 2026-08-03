@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isValidRequestOrigin } from "../src/lib/auth";
+import { hasAdminRole, isValidRequestOrigin } from "../src/lib/auth";
 
 describe("request origin validation", () => {
+  it("orders operator roles without granting viewer mutation authority", () => {
+    expect(hasAdminRole("system_admin", "operator")).toBe(true);
+    expect(hasAdminRole("operator", "operator")).toBe(true);
+    expect(hasAdminRole("editor", "operator")).toBe(false);
+    expect(hasAdminRole("viewer", "viewer")).toBe(true);
+  });
   it("accepts the public origin forwarded by the trusted reverse proxy", () => {
     const request = new Request("http://catalog:8787/api/admin/v1/tasks", {
       method: "POST",

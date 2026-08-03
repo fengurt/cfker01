@@ -1,5 +1,6 @@
 import { isValidRequestOrigin, requireAdminToken } from "../lib/auth";
 import { ensurePeriodicResourceSnapshot } from "../lib/resource-snapshot";
+import { openIncident, resolveIncidentsForEntity } from "../lib/incident-store";
 
 type MonitorResult = {
   entityType: "server" | "deployment";
@@ -63,6 +64,11 @@ async function storeResults(request: Request, env: Env, ctx: ExecutionContext) {
   for (const result of body.results) {
     if (!result || !["server", "deployment"].includes(result.entityType) || !result.entityId || !["healthy", "reachable", "degraded", "down"].includes(result.status)) continue;
     const state = await updateEntity(env, result, now);
+    if (state === "down" || state === "degraded") {
+      ctx.waitUntil(recordAvailabilityIncident(env, result, state));
+    } else if (state === "healthy" || state === "reachable") {
+      ctx.waitUntil(resolveIncidentsForEntity(env, result.entityType, result.entityId));
+    }
     if (state === "healthy" || state === "reachable") healthy += 1;
     else if (state === "down") down += 1;
     else degraded += 1;
@@ -92,6 +98,22 @@ async function updateEntity(env: Env, result: MonitorResult, fallbackTime: strin
     await env.MGMT_DB.prepare(`UPDATE availability_events SET resolved_at=?1,updated_at=?1 WHERE entity_type=?2 AND entity_id=?3 AND resolved_at IS NULL`).bind(checkedAt, result.entityType, result.entityId).run();
   }
   return state;
+}
+
+async function recordAvailabilityIncident(env: Env, result: MonitorResult, state: string): Promise<void> {
+  const criticalProjectDown = result.entityType === "deployment" && Boolean((await env.MGMT_DB.prepare(`SELECT r.criticality FROM deployments d LEFT JOIN project_deployment_requirements r ON r.project_id=d.project_id WHERE d.id=?1`).bind(result.entityId).first<{ criticality: string | null }>())?.criticality === "critical");
+  await openIncident(env, {
+    entityType: result.entityType,
+    entityId: result.entityId,
+    check: "availability",
+    rootCause: result.errorCode || `status_${state}`,
+    title: `${result.entityType} ${state}`,
+    summary: result.errorCode ? `Availability probe reported ${result.errorCode}.` : `Availability probe reported ${state}.`,
+    evidence: [result.errorCode || state, result.httpStatus ? `http_${result.httpStatus}` : "no_http_status"],
+    criticalProjectDown,
+    degraded: state === "degraded",
+    productionImpact: result.entityType === "deployment",
+  });
 }
 
 async function summary(env: Env) {

@@ -710,8 +710,37 @@ async function loadServers() {
   monitorSummary = monitor.data;
   populateServerOptions(servers);
   renderServers();
+  await loadIncidentInbox();
   await loadExpiringResources();
 }
+async function loadIncidentInbox() {
+  const target = $("#incident-inbox-list"), summary = $("#incident-inbox-summary");
+  if (!target) return;
+  try {
+    const body = await request("/api/admin/v1/incidents?status=open&limit=20"), items = body.data || [];
+    target.replaceChildren();
+    summary.textContent = locale === "zh-CN" ? `${items.length} 个未恢复事件` : `${items.length} open incidents`;
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "incident-empty"; empty.textContent = locale === "zh-CN" ? "当前没有需要处理的事件。" : "No incidents need attention."; target.append(empty); return;
+    }
+    for (const incident of items) {
+      const card = document.createElement("article"); card.className = "incident-card"; card.dataset.severity = incident.severity || "p3";
+      const severity = document.createElement("strong"); severity.className = "incident-severity"; severity.textContent = String(incident.severity || "p3").toUpperCase();
+      const content = document.createElement("div"), title = document.createElement("h3"), detail = document.createElement("p");
+      title.textContent = incident.title || incident.entity_id || "Incident"; detail.textContent = `${incident.summary || ""} · ${formatDateTime(incident.last_detected_at)}`; content.append(title, detail);
+      const acknowledge = document.createElement("button"); acknowledge.type = "button"; acknowledge.textContent = locale === "zh-CN" ? "确认" : "Acknowledge"; acknowledge.dataset.incidentId = incident.id; acknowledge.dataset.incidentVersion = incident.version;
+      card.append(severity, content, acknowledge); target.append(card);
+    }
+  } catch (error) {
+    summary.textContent = locale === "zh-CN" ? "事件读取失败" : "Incident feed unavailable";
+    target.replaceChildren(); const empty = document.createElement("p"); empty.className = "incident-empty"; empty.textContent = error.message; target.append(empty);
+  }
+}
+$("#incident-inbox-list")?.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-incident-id]"); if (!button) return;
+  button.disabled = true;
+  try { await request(`/api/admin/v1/incidents/${encodeURIComponent(button.dataset.incidentId)}`, { method: "PATCH", body: JSON.stringify({ version: Number(button.dataset.incidentVersion), status: "acknowledged" }) }); await loadIncidentInbox(); } catch (error) { setNotice(error.message, true); button.disabled = false; }
+});
 async function loadResourceMonitoring() {
   await Promise.all([loadServers(), loadAssetSummary(), loadCloudAssets()]);
 }
