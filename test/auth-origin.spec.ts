@@ -42,4 +42,31 @@ describe("request origin validation", () => {
 
     expect(isValidRequestOrigin(request)).toBe(true);
   });
+
+  it("accepts an explicitly configured public origin when proxy headers are unavailable", () => {
+    const request = new Request("http://catalog:8787/api/admin/v1/tasks", {
+      method: "POST",
+      headers: { Origin: "https://g.ksamint.cn" },
+    });
+
+    expect(isValidRequestOrigin(request, "https://g.ksamint.cn")).toBe(true);
+  });
+
+  it("still rejects a foreign origin when a public origin is configured", () => {
+    const request = new Request("http://catalog:8787/api/admin/v1/tasks", {
+      method: "POST",
+      headers: { Origin: "https://attacker.example" },
+    });
+
+    expect(isValidRequestOrigin(request, "https://g.ksamint.cn")).toBe(false);
+  });
+
+  it("fails closed when the configured public origin is malformed", () => {
+    const request = new Request("http://catalog:8787/api/admin/v1/tasks", {
+      method: "POST",
+      headers: { Origin: "https://g.ksamint.cn" },
+    });
+
+    expect(isValidRequestOrigin(request, "not a URL")).toBe(false);
+  });
 });

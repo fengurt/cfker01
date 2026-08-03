@@ -352,12 +352,18 @@ export function normalizePhone(value: string) {
   if (/^\d{8,15}$/.test(digits)) return `+${digits}`;
   return null;
 }
-export function isValidRequestOrigin(request: Request) {
+export function isValidRequestOrigin(
+  request: Request,
+  configuredPublicOrigin?: string | null,
+) {
   const origin = request.headers.get("Origin");
   if (!origin) return true;
   try {
     const requestUrl = new URL(request.url),
       originUrl = new URL(origin);
+    const allowedOrigins = new Set<string>();
+    if (configuredPublicOrigin)
+      allowedOrigins.add(new URL(configuredPublicOrigin).origin);
     const forwardedHost = request.headers
         .get("X-Forwarded-Host")
         ?.split(",", 1)[0]
@@ -372,7 +378,9 @@ export function isValidRequestOrigin(request: Request) {
       forwarded === "https" || forwarded === "http"
         ? forwarded
         : requestUrl.protocol.slice(0, -1);
-    return originUrl.origin === new URL(`${protocol}://${host}`).origin;
+    allowedOrigins.add(new URL(`${protocol}://${host}`).origin);
+    allowedOrigins.add(requestUrl.origin);
+    return allowedOrigins.has(originUrl.origin);
   } catch {
     return false;
   }

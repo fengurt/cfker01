@@ -7,6 +7,7 @@ import {
 type TaskCoreEnv = Env & {
   TASK_CORE_URL?: string;
   TASK_CORE_INTERNAL_TOKEN?: string;
+  PUBLIC_ORIGIN?: string;
 };
 
 export function taskCoreConfigured(env: Env): boolean {
@@ -35,6 +36,8 @@ async function forward(
   headers.delete("Host");
   if (trusted) {
     const session = await readAdminSession(request, env);
+    headers.delete("Cookie");
+    headers.delete("Origin");
     headers.set("X-Task-Internal-Token", env.TASK_CORE_INTERNAL_TOKEN ?? "");
     headers.set("X-Task-Actor-Type", session ? "user" : "system");
     if (session?.userId) headers.set("X-Task-Actor-Id", session.userId);
@@ -67,7 +70,7 @@ export async function proxyTaskApi(
     if (
       !["GET", "HEAD"].includes(request.method) &&
       request.headers.has("Cookie") &&
-      !isValidRequestOrigin(request)
+      !isValidRequestOrigin(request, typed.PUBLIC_ORIGIN)
     )
       return Response.json(
         {
@@ -123,7 +126,7 @@ export async function proxyLegacyAdminTasks(
   if (
     !["GET", "HEAD"].includes(request.method) &&
     request.headers.has("Cookie") &&
-    !isValidRequestOrigin(request)
+    !isValidRequestOrigin(request, (env as TaskCoreEnv).PUBLIC_ORIGIN)
   )
     return Response.json(
       {
