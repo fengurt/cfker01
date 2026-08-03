@@ -503,6 +503,86 @@
   color: var(--muted);
   font-size: 0.61rem;
 }
+.quick-task-dialog {
+  width: min(760px, calc(100vw - 28px));
+}
+.quick-task-dialog form {
+  gap: 14px;
+  padding: 22px;
+}
+.quick-task-intro {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.quick-task-title input {
+  min-height: 54px;
+  padding: 11px 13px;
+  border-color: var(--line-strong);
+  background: var(--panel);
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.quick-task-section-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 1px 0 -5px;
+  color: var(--muted);
+  font-size: 0.67rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.quick-task-section-head small {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.55rem;
+  letter-spacing: 0;
+}
+.quick-task-error {
+  margin: -2px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--danger);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  color: var(--danger);
+  font-size: 0.72rem;
+}
+.quick-task-actions {
+  align-items: center;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.quick-task-shortcuts {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 auto 0 0;
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+.quick-task-shortcuts kbd,
+#quick-task-submit kbd {
+  padding: 2px 5px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel-strong) 68%, transparent);
+  font: 650 0.58rem/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#quick-task-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 118px;
+  justify-content: center;
+}
+#quick-task-submit kbd {
+  background: color-mix(in srgb, currentColor 13%, transparent);
+}
 .task-relations {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -623,6 +703,12 @@
   .task-form-grid,
   .task-relations {
     grid-template-columns: 1fr;
+  }
+  .quick-task-dialog form {
+    padding: 17px;
+  }
+  .quick-task-shortcuts {
+    display: none;
   }
   .task-directory form {
     grid-template-columns: 1fr 1fr;
