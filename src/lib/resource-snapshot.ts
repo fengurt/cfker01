@@ -28,7 +28,7 @@ export async function createResourceSnapshot(env: Env, trigger: "schedule" | "ma
         (SELECT last_seen_at FROM discovered_assets a WHERE a.server_id=s.id AND a.kind='server_runtime' AND a.status!='stale' ORDER BY a.last_seen_at DESC LIMIT 1) runtime_at
       FROM servers s ORDER BY s.name
     `).all<Row>(),
-    env.MGMT_DB.prepare(`SELECT COUNT(*) count FROM availability_events WHERE resolved_at IS NULL`).first<{ count: number }>(),
+    env.MGMT_DB.prepare(`SELECT COUNT(DISTINCT entity_type || ':' || entity_id) count FROM availability_events WHERE resolved_at IS NULL`).first<{ count: number }>(),
   ]);
   const generatedAt = new Date().toISOString();
   const servers = (serversResult.results ?? []).map(serializeServer);
