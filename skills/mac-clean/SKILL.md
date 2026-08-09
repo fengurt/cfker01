@@ -5,140 +5,123 @@ description: Scans macOS for apps, orphan leftovers, large caches, broken Launch
 
 # Mac Clean
 
-macOS hygiene skill: **scan first, delete only with explicit approval**.
+macOS hygiene skill: **scan → classify by risk → propose → confirm → trash**. Learned from [macleanse](https://github.com/igornumeriano/macleanse) (risk tiers, denylist, dry-run) and [Mole](https://github.com/tw93/mole) (`--zap`, optional `mo` acceleration).
 
-## Resolve scanner script
+## Resolve scripts
 
 ```bash
-# Prefer skill-bundled script, then personal install, then GitHub raw
-resolve_mac_clean_scan() {
-  local candidates=(
-    "${MAC_CLEAN_SCAN:-}"
-    "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/scripts/scan-mac-cleanup.sh"
-    "$HOME/.cursor/skills/mac-clean/scripts/scan-mac-cleanup.sh"
-  )
-  local c
-  for c in "${candidates[@]}"; do
-    [[ -n "$c" && -f "$c" ]] && { echo "$c"; return 0; }
-  done
-  return 1
-}
-SCAN="$(resolve_mac_clean_scan || true)"
-if [[ -z "${SCAN}" ]]; then
+SKILL_ROOT="${MAC_CLEAN_ROOT:-$HOME/.cursor/skills/mac-clean}"
+# plugin install path (repo or ~/.cursor/plugins/local/mac-clean):
+#   .../skills/mac-clean/
+SCAN="$SKILL_ROOT/scripts/scan-mac-cleanup.sh"
+SAFE="$SKILL_ROOT/scripts/safe_clean.sh"
+if [[ ! -f "$SCAN" ]]; then
+  SCAN="$(find "$HOME/.cursor/plugins/local/mac-clean" "$HOME/.cursor/skills/mac-clean" \
+    -path '*/scripts/scan-mac-cleanup.sh' 2>/dev/null | head -1)"
+fi
+if [[ ! -f "$SCAN" ]]; then
   curl -fsSL "https://raw.githubusercontent.com/fengurt/mac-clean-skill/main/plugins/mac-clean/skills/mac-clean/scripts/scan-mac-cleanup.sh" \
-    -o /tmp/scan-mac-cleanup.sh
-  chmod +x /tmp/scan-mac-cleanup.sh
+    -o /tmp/scan-mac-cleanup.sh && chmod +x /tmp/scan-mac-cleanup.sh
   SCAN=/tmp/scan-mac-cleanup.sh
 fi
 ```
 
-Agent shortcut: run the bundled path when present:
+Agent shortcuts:
 
 ```bash
 bash plugins/mac-clean/skills/mac-clean/scripts/scan-mac-cleanup.sh full
-# or after personal install:
-bash ~/.cursor/skills/mac-clean/scripts/scan-mac-cleanup.sh full
+bash plugins/mac-clean/skills/mac-clean/scripts/safe_clean.sh          # dry-run
+bash plugins/mac-clean/skills/mac-clean/scripts/safe_clean.sh --apply  # after approval
 ```
+
+## Risk tiers
+
+| Tier | Meaning | Confirmation |
+|---|---|---|
+| **Safe** | Recreatable caches/logs/dead agents | One batch OK after dry-run |
+| **Costly** | Dev artifacts (npm, Xcode, Docker, APFS snapshots) | Confirm per category — high ROI on developer Macs |
+| **UserData** | Orphan prefs, media, vendor roots | Confirm per path; prefer archive over delete |
+
+Denylist: [references/never_touch.md](references/never_touch.md)
 
 ## Hard rules
 
-1. **Scan before delete.** Show the report; wait for user OK.
+1. Scan before delete; show sizes; wait for approval.
 2. Prefer **`trash`** over `rm -rf`. Never empty Trash unless asked.
-3. Never delete: `com.apple.*`, Keychains, `~/Library` root, `/System`, other users’ homes.
-4. Treat Google/Adobe/Microsoft/JetBrains vendor folders as **low confidence** unless the app is gone.
-5. Do not uninstall anything the user did not name (except dry-run brew cleanup output).
+3. Destructive scripts default to **dry-run**; require `--apply` or named paths.
+4. Do not kill apps to force cache delete — skip in-use dirs or ask user to quit.
+5. Never batch-delete denylist paths (Keychains, Photos libraries, iCloud Drive, VPN, password managers).
+6. Close every cleanup with **space freed** + `df -h /`.
 
-## Workflow A — Full scan (default)
+## Workflow A — Full scan
 
 ```bash
 bash "$SCAN" full
+# modes: full | apps | leftovers | caches | agents | brew | risk
 ```
 
-Modes: `full` | `apps` | `leftovers` | `caches` | `agents` | `brew`
+Report: `$TMPDIR/mac-clean-scan/report.md`  
+Safe candidates: `$TMPDIR/mac-clean-scan/safe_candidates.txt`
+
+**ROI:** On developer machines, after one Safe batch, prioritize **Costly** (npm/pnpm/DerivedData/Docker/APFS) before chasing tiny prefs.
+
+## Workflow B — Safe-tier clean
 
 ```bash
-MIN_CACHE_MB=200 bash "$SCAN" caches
+bash "$SAFE" --rescan     # dry-run list
+# show table to user
+bash "$SAFE" --apply      # only after explicit OK
 ```
 
-Script prints the report path (`$TMPDIR/mac-clean-scan/report.md`). Summarize:
+## Workflow C — Uninstall one app
 
-| Priority | Section | Action |
-|---|---|---|
-| P0 | LaunchAgents with **missing binary** | unload + trash plist |
-| P1 | Orphan leftovers (named, user-confirmed) | `trash` paths |
-| P2 | Large caches ≥ threshold | quit app → `trash` cache dir |
-| P3 | `brew cleanup -n` / `brew autoremove -n` | run for real after OK |
-
-## Workflow B — Uninstall one app
-
-1. Detect source:
-
-```bash
-APP="<Name>"
-ls -d /Applications/"$APP".app ~/Applications/"$APP".app 2>/dev/null
-brew list --cask | rg -i "$APP"
-brew list | rg -i "$APP"
-command -v mas >/dev/null && mas list | rg -i "$APP"
-```
-
-2. Uninstall by source:
+1. Detect source (`brew` / `mas` / `.app`).
+2. Uninstall:
 
 | Source | Command |
 |---|---|
-| Homebrew cask | `brew uninstall --cask <token> && brew cleanup` |
+| Homebrew cask | `brew uninstall --cask --zap <token>` then `brew cleanup` |
 | Homebrew formula | `brew uninstall <token> && brew autoremove` |
 | Mac App Store | `mas uninstall <id>` |
-| Drag-installed `.app` | `trash "/Applications/<Name>.app"` |
+| Drag-installed | `trash "/Applications/<Name>.app"` + Library sweep |
 
-3. Leftover sweep (review first):
+3. Leftover sweep with bundle ID from `Info.plist` + `mdfind`; unload dead LaunchAgents before `trash`.
+
+## Workflow D — Optional Mole acceleration
+
+Only if `command -v mo` succeeds — **do not install Mole unless the user asks**:
 
 ```bash
-APP="<Name>"
-mdfind "kMDItemFSName == '*${APP}*'c" 2>/dev/null | rg -i "Library|Applications" | head -80
+mo clean --dry-run
+mo uninstall
 ```
 
-Unload agents before trashing:
+## APFS snapshots (Costly)
 
 ```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.vendor.app.plist 2>/dev/null || true
-trash ~/Library/LaunchAgents/com.vendor.app.plist
-```
-
-## Workflow C — Safe bulk cache clear
-
-Only after user confirms paths from the report:
-
-```bash
-trash ~/Library/Caches/<SomethingLarge>
-brew cleanup -s
-brew autoremove
+tmutil listlocalsnapshots /
+# after confirm — thin, do not delete all blindly:
+tmutil thinlocalsnapshots / <bytes> 4
 ```
 
 ## Output format
 
 ```markdown
 ## Mac clean report
-- Disk: …
-- High-confidence removals: …
-- Medium leftovers: …
-- Large caches: …
+- Disk before: …
+- Safe / Costly / UserData top items…
 
 ### Proposed deletions
-| Priority | Path | Size | Why |
-|---|---|---:|---|
+| Tier | Path | Size | Why |
 
-Reply with paths to trash, or “all P0”.
-```
-
-## Optional tools
-
-```bash
-brew install trash mas
-brew install --cask pearcleaner
+### After (if applied)
+- Freed: …
+- Disk after: `df -h /`
 ```
 
 ## Do not
 
-- Run third-party “Mac cleaner” junkware
+- Third-party “Mac cleaner” junkware
 - `sudo rm -rf` on Library trees
-- Claim orphan detection is perfect — always say “candidate”
+- Claim orphan detection is perfect — say “candidate”
+- Delete WhatsApp/iMessage/Photos media with `rm`
