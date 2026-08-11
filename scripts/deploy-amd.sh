@@ -24,7 +24,7 @@ echo "Deploying ${COMMIT} to ${SSH_TARGET}:${REMOTE_APP_DIR}"
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "test -f '$REMOTE_APP_DIR/.env.docker' && mkdir -p '$REMOTE_APP_DIR/backups'"
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cd '$REMOTE_APP_DIR' && tar --exclude=backups --exclude=.env.docker --exclude=node_modules --exclude=.wrangler --exclude=dist --exclude=.cache -czf 'backups/pre-deploy-${STAMP}.tar.gz' ."
 git -C "$ROOT" archive "$COMMIT" | ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "tar -x -C '$REMOTE_APP_DIR'"
-ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cd '$REMOTE_APP_DIR' && DEPLOY_VERSION='$COMMIT' docker compose --env-file .env.docker config --quiet && DEPLOY_VERSION='$COMMIT' docker compose --env-file .env.docker build --pull && DEPLOY_VERSION='$COMMIT' docker compose --env-file .env.docker up -d --remove-orphans"
+ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cd '$REMOTE_APP_DIR' && DEPLOY_VERSION='$COMMIT' docker compose --env-file .env.docker config --quiet && DEPLOY_VERSION='$COMMIT' docker compose --env-file .env.docker build --pull && DEPLOY_VERSION='$COMMIT' docker compose --env-file .env.docker up -d --force-recreate --remove-orphans"
 
 for attempt in {1..30}; do
   if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cd '$REMOTE_APP_DIR' && docker compose --env-file .env.docker ps --format '{{.Name}} {{.State}} {{.Health}}' | grep -q 'tableai-catalog-catalog-1.*running.*healthy'"; then
