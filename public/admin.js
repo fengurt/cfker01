@@ -1224,8 +1224,8 @@ function loadMeaning(server, host) {
   if (!Number.isFinite(raw)) return locale === "zh-CN" ? "Load 未采集" : "Load not collected";
   const cpu = numericCpu(server.cpu) || numericCpu(host?.cpuCount);
   return cpu > 0
-    ? "Load " + raw.toFixed(2) + " · " + (locale === "zh-CN" ? "1 分钟平均负载 / " : "1-minute average / ") + cpu + " vCPU"
-    : "Load " + raw.toFixed(2) + " · " + (locale === "zh-CN" ? "1 分钟平均负载" : "1-minute average");
+    ? (locale === "zh-CN" ? "负载 " : "Load ") + raw.toFixed(2) + " · " + (locale === "zh-CN" ? "1 分钟平均可运行任务数 / " : "1-minute runnable-task average / ") + cpu + " vCPU"
+    : (locale === "zh-CN" ? "负载 " : "Load ") + raw.toFixed(2) + " · " + (locale === "zh-CN" ? "1 分钟平均可运行任务数" : "1-minute runnable-task average");
 }
 
 function appendFleetMetric(target, label, value, detail, tone = "") {
@@ -1266,7 +1266,7 @@ function renderFleetServerRecord(server) {
     const memoryTotal = Number(host.memoryTotalKb || 0) * 1024, memoryUsed = Math.max(0, Number(host.memoryTotalKb || 0) - Number(host.memoryAvailableKb || 0)) * 1024, diskTotal = Number(host.diskTotalBytes || 0), diskUsed = Number(host.diskUsedBytes || 0), load = ratio(host.load1, numericCpu(server.cpu) || numericCpu(host.cpuCount)), memoryRatio = ratio(memoryUsed, memoryTotal), diskRatio = ratio(diskUsed, diskTotal);
     appendFleetMetric(meters, "RAM", memoryRatio, formatBytes(memoryUsed) + " / " + formatBytes(memoryTotal), capacityTone(memoryRatio));
     appendFleetMetric(meters, "Disk", diskRatio, formatBytes(diskUsed) + " / " + formatBytes(diskTotal), capacityTone(diskRatio));
-    appendFleetMetric(meters, "Load", load, loadMeaning(server, host), capacityTone(load));
+    appendFleetMetric(meters, locale === "zh-CN" ? "负载" : "Load", load, loadMeaning(server, host), capacityTone(load));
   } else {
     const empty = document.createElement("p"); empty.className = "fleet-record-empty"; empty.textContent = locale === "zh-CN" ? "尚无近期运行时采样，性能数据不可判定。" : "No recent runtime sample; performance cannot be determined."; meters.append(empty);
   }
