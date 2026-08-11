@@ -14,6 +14,7 @@ umask 077
   printf 'API_KEY_SALT=%s\n' "$API_KEY_SALT"
   printf 'APP_NAME=%s\n' "${APP_NAME:-tableai-catalog}"
   printf 'ENVIRONMENT=%s\n' "${ENVIRONMENT:-self-hosted}"
+  printf 'DEPLOY_VERSION=%s\n' "${DEPLOY_VERSION:-unknown}"
   printf 'STATUS_PAGE_TITLE=%s\n' "${STATUS_PAGE_TITLE:-TableAI catalog status}"
   printf 'COOKIE_SECURE=%s\n' "${COOKIE_SECURE:-true}"
   [[ -n "${CONTENT_ENCRYPTION_KEY:-}" ]] && printf 'CONTENT_ENCRYPTION_KEY=%s\n' "$CONTENT_ENCRYPTION_KEY"
