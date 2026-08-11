@@ -232,7 +232,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "const fs=require('fs');const exists=p=>{try{return fs.statSync(p)}catch{return null}};const success=exists('/data/assets/last-success');const error=exists('/data/assets/last-error');const scanner=Boolean(process.env.SCANNER_KEY);const fresh=success&&Date.now()-success.mtimeMs<18000000;if((scanner&&!success&&!error)||(fresh&&!error))process.exit(0);process.exit(1)",
+          "const fs=require('fs');const exists=p=>{try{return fs.statSync(p)}catch{return null}};const success=exists('/data/assets/last-success');const poll=exists('/data/assets/last-poll');const scanner=Boolean(process.env.SCANNER_KEY);const scanFresh=success&&Date.now()-success.mtimeMs<18000000;const pollFresh=poll&&Date.now()-poll.mtimeMs<300000;if((scanner&&pollFresh)||(!scanner&&scanFresh))process.exit(0);process.exit(1)",
         ]
       interval: 5m
       timeout: 10s

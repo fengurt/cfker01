@@ -15,6 +15,7 @@ await mkdir("/data/assets", { recursive: true });
 while (true) {
   try {
     const jobs = (await api(`${base}/api/ingest/v1/jobs`, { headers })).data || [];
+    await writeFile("/data/assets/last-poll", `${new Date().toISOString()}\n`, { mode: 0o600 });
     if (!jobs.length) await sleep(pollSeconds * 1000);
     for (const job of jobs) await execute(job);
   } catch (error) {
