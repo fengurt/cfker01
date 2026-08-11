@@ -74,6 +74,23 @@ async function discoverTencent(){
   await discoverTencentTat(accountId,instances);
   try{const zones=await jsonCommand("tccli",["teo","DescribeZones","--region","ap-guangzhou"]);for(const zone of zones.Zones||[])assets.push(a("tencent",accountId,"edgeone_zone",zone.ZoneId,zone.ZoneName||zone.ZoneId,zone.Status||"unknown",null,zone.ZoneName?`https://${zone.ZoneName}`:null,{type:zone.Type,planId:zone.PlanId,createdAt:zone.CreatedOn,modifiedAt:zone.ModifiedOn}));}catch(error){errors.push(err("tencent","edgeone",error));}
   try{const text=await textCommand("coscli",["ls","--disable-log"]);for(const line of text.split("\n")){const match=line.match(/^\s{2}(\S+)\s+\|\s+(\S+)\s+\|\s+([^|]+?)\s*$/);if(match)assets.push(a("tencent",accountId,"cos_bucket",match[1],match[1],"available",match[2],null,{createdAt:match[3].trim()}));}}catch(error){errors.push(err("tencent","cos",error));}
+  await discoverTencentBilling(accountId,instances);
+}
+
+async function discoverTencentBilling(accountId,instances){
+  const month=new Date().toISOString().slice(0,7);
+  try{
+    const balance=await jsonCommand("tccli",["billing","DescribeAccountBalance","--region","ap-guangzhou"]),response=balance.Response||balance;
+    assets.push(a("tencent",accountId,"billing_account",accountId,"Tencent Cloud billing account","available",null,null,{accountId,balanceCNY:Number(response.RealBalance||0)/100,frozenCNY:Number(response.OweAmount||0)/100,month,source:"DescribeAccountBalance"}));
+  }catch(error){errors.push(err("tencent","billing:balance",error));}
+  try{
+    const rows=await paginatedTencent("billing","DescribeBillResourceSummary",["--Month",month,"--NeedRecordNum","1"],"ResourceSummarySet",1000,"Total");
+    const instanceById=new Map(instances.map(value=>[String(value.item.InstanceId),value]));
+    for(const row of rows){
+      const resourceId=String(row.ResourceId||row.ResourceName||crypto.randomUUID()),instance=instanceById.get(resourceId),business=String(row.BusinessCode||"");
+      assets.push(a("tencent",accountId,"billing_resource",`${month}:${resourceId}`,String(row.ResourceName||resourceId),"available",row.RegionName||null,null,{month,resourceId,businessCode:business,businessCodeName:row.BusinessCodeName||null,productCodeName:row.ProductCodeName||null,payMode:row.PayModeName||null,totalCost:Number(row.TotalCost),realTotalCost:Number(row.RealTotalCost),feeBeginTime:row.FeeBeginTime||null,feeEndTime:row.FeeEndTime||null,configDesc:row.ConfigDesc||null},resourceId,instance?.serverId||null));
+    }
+  }catch(error){errors.push(err("tencent","billing:resources",error));}
 }
 
 async function discoverTencentTat(accountId,instances){
