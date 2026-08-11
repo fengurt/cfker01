@@ -10,7 +10,10 @@ umask 077
 
 if [[ -n "${TENCENT_SECRET_ID:-}" && -n "${TENCENT_SECRET_KEY:-}" ]]; then
   tccli configure set secretId "${TENCENT_SECRET_ID}" secretKey "${TENCENT_SECRET_KEY}" region "${TENCENT_REGION:-ap-guangzhou}" output json >/dev/null
-  coscli config set --secret_id "${TENCENT_SECRET_ID}" --secret_key "${TENCENT_SECRET_KEY}" --disable-log >/dev/null
+  # COS CLI can otherwise enter its first-run interactive wizard.  The sync
+  # worker has no TTY, so fail fast and let the provider be marked partial.
+  timeout --signal=TERM --kill-after=5 30 \
+    coscli --init-skip config set --secret_id "${TENCENT_SECRET_ID}" --secret_key "${TENCENT_SECRET_KEY}" --disable-log >/dev/null 2>&1 || true
 fi
 
 run_sync_legacy() {
