@@ -1,26 +1,54 @@
-import { isValidRequestOrigin, readAdminSession, requireAdminToken } from "../lib/auth";
+import { isValidRequestOrigin, readAdminSession, requireAdminRole } from "../lib/auth";
 import { hashKey } from "../lib/apikey";
 import { createScanJob, ensureDueScanJobs } from "../lib/scan-jobs";
 import { generateScannerKey } from "../lib/scanner-auth";
 import { createResourceSnapshot, latestResourceSnapshot } from "../lib/resource-snapshot";
+import { getIncident, listIncidents, openIncident, updateIncident } from "../lib/incident-store";
+import type { IncidentSeverity } from "../lib/incidents";
+import { rankPlacement } from "../lib/placement";
 
 const SECRET_FIELD = /(secret|token|password|credential|private.?key|api.?key)/i;
 
 export async function handleAdminApiV1(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const auth = await requireAdminToken(request, env);
-  if (auth) return v1Error(request, "unauthorized", "Administrator authentication is required.", 401);
-  if (!["GET", "HEAD"].includes(request.method) && request.headers.has("Cookie") && !isValidRequestOrigin(request)) {
-    return v1Error(request, "invalid_origin", "The request origin is not allowed.", 403);
-  }
   const url = new URL(request.url);
   const parts = url.pathname.split("/").filter(Boolean).slice(3);
   const [resource, id, action] = parts;
+  const requiredRole = adminApiRole(request, resource, id, action);
+  const auth = requiredRole === "system_admin"
+    ? await requireAdminRole(request, env, "system_admin")
+    : await requireAdminRole(request, env, requiredRole);
+  if (auth) {
+    const status = auth.status === 403 ? 403 : 401;
+    return v1Error(request, status === 403 ? "forbidden" : "unauthorized", status === 403 ? "This role cannot perform the requested operation." : "Administrator authentication is required.", status);
+  }
+  if (!["GET", "HEAD"].includes(request.method) && request.headers.has("Cookie") && !isValidRequestOrigin(request)) {
+    return v1Error(request, "invalid_origin", "The request origin is not allowed.", 403);
+  }
   try {
     if (resource === "openapi.json" && request.method === "GET") return openApi(request);
     if (resource === "overview" && request.method === "GET") return overview(request, env);
+    if (resource === "repository-audit") {
+      if (id === "runs" && request.method === "GET") return repositoryAuditRuns(request, env);
+      if (id === "repositories" && request.method === "GET") return repositoryAuditRepositories(request, env, url);
+      if (id === "repositories" && action && request.method === "GET") return repositoryAuditRepository(request, env, action);
+    }
+    if (resource === "deployment-evidence" && request.method === "GET") return deploymentEvidence(request, env);
+    if (resource === "server-status" && request.method === "GET") return serverStatus(request, env);
+    if (resource === "audit" && id === "export.ndjson" && request.method === "GET") return exportRepositoryAudit(env);
     if (resource === "resource-snapshots") {
       if (id === "current" && request.method === "GET") return currentResourceSnapshot(request, env);
       if (!id && request.method === "POST") return generateResourceSnapshot(request, env, ctx);
+    }
+    if (resource === "deployment-requirements" && id) {
+      if (request.method === "GET") return deploymentRequirements(request, env, id);
+      if (request.method === "PATCH") return patchDeploymentRequirements(request, env, id, ctx);
+    }
+    if (resource === "placement-recommendations" && id && request.method === "GET") return placementRecommendations(request, env, id);
+    if (resource === "incidents") {
+      if (!id && request.method === "GET") return incidents(request, env, url);
+      if (!id && request.method === "POST") return createIncident(request, env, ctx);
+      if (id && request.method === "GET") return incidentDetail(request, env, id);
+      if (id && request.method === "PATCH") return patchIncident(request, env, id);
     }
     if (resource === "sources") {
       if (!id && request.method === "GET") return sources(request, env);
@@ -57,6 +85,15 @@ export async function handleAdminApiV1(request: Request, env: Env, ctx: Executio
   }
 }
 
+function adminApiRole(request: Request, resource: string | undefined, _id: string | undefined, _action: string | undefined): "viewer" | "operator" | "system_admin" {
+  if (resource === "service-keys") return "system_admin";
+  if (request.method === "GET" || request.method === "HEAD") return "viewer";
+  if (resource === "openapi.json") return "viewer";
+  // Operational mutations are intentionally operator-only. Editors can still
+  // use read APIs and the existing editor-facing task workspace.
+  return "operator";
+}
+
 async function overview(request: Request, env: Env): Promise<Response> {
   await ensureDueScanJobs(env);
   const [connectors, assets, jobs, errors] = await Promise.all([
@@ -66,6 +103,61 @@ async function overview(request: Request, env: Env): Promise<Response> {
     env.MGMT_DB.prepare(`SELECT id,connector_id,status,error_code,error_message,updated_at FROM scan_jobs WHERE error_code IS NOT NULL ORDER BY updated_at DESC LIMIT 10`).all(),
   ]);
   return v1Data(request, { connectors: connectors.results ?? [], assets: assets.results ?? [], jobs: jobs.results ?? [], recentErrors: errors.results ?? [] }, { generatedAt: new Date().toISOString() });
+}
+
+async function repositoryAuditRuns(request: Request, env: Env): Promise<Response> {
+  const rows = await env.MGMT_DB.prepare(`SELECT * FROM repository_scan_runs ORDER BY started_at DESC LIMIT 100`).all<Record<string, unknown>>();
+  return v1Data(request, rows.results ?? [], { count: rows.results?.length ?? 0 });
+}
+
+async function repositoryAuditRepositories(request: Request, env: Env, url: URL): Promise<Response> {
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 50)));
+  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0));
+  if (!Number.isInteger(limit) || !Number.isInteger(offset)) return v1Error(request, "invalid_query", "limit and offset must be integers.", 400);
+  const values: unknown[] = [], where: string[] = [];
+  for (const [key, column] of [["sync_status", "sync_status"], ["deployment_status", "deployment_status"]] as const) {
+    const value = cleanText(url.searchParams.get(key), 80); if (value) { values.push(value); where.push(`${column}=?${values.length}`); }
+  }
+  const q = cleanText(url.searchParams.get("q"), 200); if (q) { values.push(`%${q}%`); where.push(`canonical_key LIKE ?${values.length}`); }
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const rows = await env.MGMT_DB.prepare(`SELECT id,project_id,canonical_key,github_owner,github_repo,repository_url,local_paths,head_sha,branch,dirty,ahead,behind,default_branch,pushed_at,visibility,archived,fork,ci_status,release_name,topics,sync_status,hygiene,deployment_status,deployment_evidence,last_scanned_at,updated_at FROM repository_snapshots ${clause} ORDER BY updated_at DESC,canonical_key LIMIT ?${values.length + 1} OFFSET ?${values.length + 2}`).bind(...values, limit, offset).all<Record<string, unknown>>();
+  const total = await env.MGMT_DB.prepare(`SELECT COUNT(*) count FROM repository_snapshots ${clause}`).bind(...values).first<{ count: number }>();
+  return v1Data(request, (rows.results ?? []).map(serializeRepositorySnapshot), { limit, offset, total: Number(total?.count ?? 0), hasMore: offset + (rows.results?.length ?? 0) < Number(total?.count ?? 0) });
+}
+
+async function repositoryAuditRepository(request: Request, env: Env, id: string): Promise<Response> {
+  const snapshot = await env.MGMT_DB.prepare(`SELECT * FROM repository_snapshots WHERE id=?1 OR canonical_key=?1`).bind(id).first<Record<string, unknown>>();
+  if (!snapshot) return v1Error(request, "not_found", "Repository audit record not found.", 404);
+  const [reviews, candidates] = await Promise.all([
+    env.MGMT_DB.prepare(`SELECT * FROM repository_reviews WHERE snapshot_id=?1 ORDER BY reviewed_at DESC LIMIT 20`).bind(snapshot.id).all(),
+    env.MGMT_DB.prepare(`SELECT * FROM repository_review_candidates WHERE snapshot_id=?1 AND status='pending' ORDER BY created_at DESC`).bind(snapshot.id).all(),
+  ]);
+  return v1Data(request, { snapshot: serializeRepositorySnapshot(snapshot), reviews: reviews.results ?? [], candidates: candidates.results ?? [] });
+}
+
+async function deploymentEvidence(request: Request, env: Env): Promise<Response> {
+  const rows = await env.MGMT_DB.prepare(`SELECT r.id,r.canonical_key,r.repository_url,r.head_sha,r.sync_status,r.deployment_status,r.deployment_evidence,r.last_scanned_at,r.project_id,p.name project_name,d.id deployment_id,d.environment,d.deployed_url,d.version,d.status deployment_runtime_status,d.deployed_at,d.last_checked_at,d.last_latency_ms,d.last_error,s.name server_name,s.status server_status,s.health_status server_health_status FROM repository_snapshots r LEFT JOIN catalog_projects p ON p.id=r.project_id LEFT JOIN deployments d ON d.project_id=r.project_id LEFT JOIN servers s ON s.id=d.server_id ORDER BY r.updated_at DESC`).all<Record<string, unknown>>();
+  return v1Data(request, (rows.results ?? []).map((row) => ({ ...row, deploymentEvidence: parseJson(row.deployment_evidence, []) })));
+}
+
+async function serverStatus(request: Request, env: Env): Promise<Response> {
+  const rows = await env.MGMT_DB.prepare(`SELECT s.*, (SELECT COUNT(*) FROM deployments d WHERE d.server_id=s.id) deployment_count, (SELECT COUNT(*) FROM discovered_assets a WHERE a.server_id=s.id AND a.kind IN ('runtime_container','container') AND a.status!='stale') container_count, (SELECT COUNT(*) FROM discovered_assets a WHERE a.server_id=s.id AND a.kind IN ('runtime_service','compose_project') AND a.status!='stale') service_count, (SELECT MAX(last_seen_at) FROM discovered_assets a WHERE a.server_id=s.id AND a.kind='server_runtime') runtime_seen_at FROM servers s ORDER BY deployment_count ASC,s.name`).all<Record<string, unknown>>();
+  const now = Date.now();
+  return v1Data(request, (rows.results ?? []).map((row) => {
+    const runtimeSeen = row.runtime_seen_at ? Date.parse(String(row.runtime_seen_at)) : NaN;
+    const runtimeFresh = Number.isFinite(runtimeSeen) && now - runtimeSeen <= 15 * 60 * 1000;
+    return { ...row, runtimeFresh, availability: row.health_status === "healthy" && runtimeFresh ? "healthy" : row.health_status === "down" ? "down" : runtimeFresh ? "degraded" : "stale" };
+  }), { generatedAt: new Date().toISOString(), freshnessMinutes: 15 });
+}
+
+function exportRepositoryAudit(env: Env): Response {
+  const encoder = new TextEncoder(); let offset = 0;
+  const stream = new ReadableStream<Uint8Array>({ async pull(controller) {
+    const rows = await env.MGMT_DB.prepare(`SELECT * FROM repository_snapshots ORDER BY canonical_key LIMIT 200 OFFSET ?1`).bind(offset).all<Record<string, unknown>>();
+    const values = rows.results ?? []; if (!values.length) { controller.close(); return; }
+    controller.enqueue(encoder.encode(values.map((row) => JSON.stringify(serializeRepositorySnapshot(row))).join("\n") + "\n")); offset += values.length;
+  }});
+  return new Response(stream, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Content-Disposition": "attachment; filename=repository-audit.ndjson", "Cache-Control": "no-store" } });
 }
 
 async function currentResourceSnapshot(request: Request, env: Env): Promise<Response> {
@@ -78,6 +170,123 @@ async function generateResourceSnapshot(request: Request, env: Env, ctx: Executi
   const snapshot = await createResourceSnapshot(env, "manual");
   ctx.waitUntil(audit(env, "resource_snapshot.generated", { generatedAt: snapshot.generatedAt }, snapshot.generatedAt));
   return v1Data(request, snapshot, { generatedAt: snapshot.generatedAt, schemaVersion: snapshot.schemaVersion }, 201);
+}
+
+async function deploymentRequirements(request: Request, env: Env, projectId: string): Promise<Response> {
+  const project = await env.MGMT_DB.prepare(`SELECT id,name,lifecycle FROM catalog_projects WHERE id=?1`).bind(projectId).first<Record<string, unknown>>();
+  if (!project) return v1Error(request, "not_found", "Project not found.", 404);
+  const row = await env.MGMT_DB.prepare(`SELECT * FROM project_deployment_requirements WHERE project_id=?1`).bind(projectId).first<Record<string, unknown>>();
+  return v1Data(request, { project, requirements: row ? serializeRequirements(row) : null });
+}
+
+async function patchDeploymentRequirements(request: Request, env: Env, projectId: string, ctx: ExecutionContext): Promise<Response> {
+  const body = await readObject(request);
+  if (!body) return v1Error(request, "invalid_json", "A JSON object is required.", 400);
+  const project = await env.MGMT_DB.prepare(`SELECT id FROM catalog_projects WHERE id=?1`).bind(projectId).first();
+  if (!project) return v1Error(request, "not_found", "Project not found.", 404);
+  const current = await env.MGMT_DB.prepare(`SELECT * FROM project_deployment_requirements WHERE project_id=?1`).bind(projectId).first<Record<string, unknown>>();
+  const numberField = (key: string) => body[key] === undefined ? (current?.[key.replace(/[A-Z]/g, (char) => `_${char.toLowerCase()}`)] ?? null) : body[key] == null ? null : Number(body[key]);
+  const architecture = body.architecture === undefined ? current?.architecture ?? null : cleanText(body.architecture, 40);
+  const runtime = body.runtime === undefined ? current?.runtime ?? null : cleanText(body.runtime, 80);
+  const minCpu = numberField("minCpu");
+  const minMemoryMb = numberField("minMemoryMb");
+  const minDiskGb = numberField("minDiskGb");
+  if ([minCpu, minMemoryMb, minDiskGb].some((value) => value != null && (!Number.isFinite(Number(value)) || Number(value) < 0))) return v1Error(request, "invalid_requirements", "Capacity requirements must be non-negative numbers.", 400);
+  const now = new Date().toISOString();
+  const values = [architecture, runtime, minCpu, minMemoryMb, minDiskGb, body.stateful === undefined ? Number(current?.stateful ?? 0) : body.stateful ? 1 : 0, body.requiredRegion === undefined ? current?.required_region ?? null : cleanText(body.requiredRegion, 100), JSON.stringify(normalizeStrings(body.networkRequirements ?? parseJson(current?.network_requirements, []))), JSON.stringify(normalizeStrings(body.storageRequirements ?? parseJson(current?.storage_requirements, []))), body.maxDowntimeMinutes === undefined ? current?.max_downtime_minutes ?? null : body.maxDowntimeMinutes == null ? null : Number(body.maxDowntimeMinutes), body.healthCheckUrl === undefined ? current?.health_check_url ?? null : cleanText(body.healthCheckUrl, 500), body.rollbackStrategy === undefined ? current?.rollback_strategy ?? null : cleanText(body.rollbackStrategy, 500), body.backupPolicy === undefined ? current?.backup_policy ?? null : cleanText(body.backupPolicy, 500), body.criticality === undefined ? current?.criticality ?? "normal" : cleanText(body.criticality, 40), "admin", now];
+  if (current) {
+    await env.MGMT_DB.prepare(`UPDATE project_deployment_requirements SET architecture=?1,runtime=?2,min_cpu=?3,min_memory_mb=?4,min_disk_gb=?5,stateful=?6,required_region=?7,network_requirements=?8,storage_requirements=?9,max_downtime_minutes=?10,health_check_url=?11,rollback_strategy=?12,backup_policy=?13,criticality=?14,confirmed_by=?15,confirmed_at=?16,source='admin',version=version+1,updated_at=?16 WHERE project_id=?17`).bind(...values, projectId).run();
+  } else {
+    await env.MGMT_DB.prepare(`INSERT INTO project_deployment_requirements(project_id,architecture,runtime,min_cpu,min_memory_mb,min_disk_gb,stateful,required_region,network_requirements,storage_requirements,max_downtime_minutes,health_check_url,rollback_strategy,backup_policy,criticality,confirmed_by,confirmed_at,source,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,'admin',?17,?17)`).bind(projectId, ...values).run();
+  }
+  ctx.waitUntil(audit(env, "deployment_requirements.updated", { projectId }, now));
+  return deploymentRequirements(request, env, projectId);
+}
+
+async function placementRecommendations(request: Request, env: Env, projectId: string): Promise<Response> {
+  const requirementRow = await env.MGMT_DB.prepare(`SELECT * FROM project_deployment_requirements WHERE project_id=?1`).bind(projectId).first<Record<string, unknown>>();
+  if (!requirementRow) return v1Data(request, { projectId, status: "insufficient_data", candidates: [], excluded: [{ id: projectId, reasons: ["deployment_requirements_missing"] }] });
+  const snapshot = await latestResourceSnapshot(env);
+  const candidates = (snapshot?.serverPlacement ?? []).map((server) => {
+    const capacity = (server.capacity ?? {}) as Record<string, unknown>;
+    const runtime = (server.runtime ?? {}) as Record<string, unknown>;
+    const placement = (server.placement ?? {}) as Record<string, unknown>;
+    const reasons = Array.isArray(placement.reasons) ? placement.reasons.map(String) : [];
+    return { id: String(server.id), name: String(server.name), status: String(server.status), manualStatus: null, runtimeFresh: Boolean(placement.eligible) || reasons.includes("healthy_recent_runtime_sample"), architecture: server.architecture == null ? null : String(server.architecture), region: server.region == null ? null : String(server.region), vcpu: capacity.vcpu == null ? null : Number(capacity.vcpu), memoryMb: capacity.memoryGiB == null ? null : Number(capacity.memoryGiB) * 1024, diskGb: capacity.diskGiB == null ? null : Number(capacity.diskGiB), pressure: placement.pressure == null ? null : Number(placement.pressure), runtime: runtime.collectedAt == null ? null : String(runtime.collectedAt) };
+  });
+  const result = rankPlacement(serializeRequirements(requirementRow), candidates);
+  return v1Data(request, { projectId, generatedAt: snapshot?.generatedAt ?? null, ...result });
+}
+
+async function incidents(request: Request, env: Env, url: URL): Promise<Response> {
+  const severity = url.searchParams.get("severity");
+  if (severity && !["p0", "p1", "p2", "p3"].includes(severity)) return v1Error(request, "invalid_query", "severity is invalid.", 400);
+  const rows = await listIncidents(env, {
+    status: url.searchParams.get("status"),
+    severity: severity as IncidentSeverity | null,
+    projectId: url.searchParams.get("projectId"),
+    ownerUserId: url.searchParams.get("ownerUserId"),
+    limit: Number(url.searchParams.get("limit") ?? 100),
+  });
+  return v1Data(request, rows.map(serializeIncident), { count: rows.length });
+}
+
+async function createIncident(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const body = await readObject(request);
+  if (!body || !body.entityType || !body.entityId || !body.check || !body.rootCause || !body.title || !body.summary) return v1Error(request, "invalid_incident", "entityType, entityId, check, rootCause, title, and summary are required.", 400);
+  const incident = await openIncident(env, {
+    entityType: String(body.entityType),
+    entityId: String(body.entityId),
+    check: String(body.check),
+    rootCause: String(body.rootCause),
+    title: String(body.title),
+    summary: String(body.summary),
+    evidence: normalizeStrings(body.evidence),
+    projectId: body.projectId ? String(body.projectId) : null,
+    affectedProductionProjects: Number(body.affectedProductionProjects ?? 0),
+    productionImpact: Boolean(body.productionImpact),
+    dataLoss: Boolean(body.dataLoss),
+    security: Boolean(body.security),
+    coreConsoleDown: Boolean(body.coreConsoleDown),
+    criticalProjectDown: Boolean(body.criticalProjectDown),
+    diskExhaustion: Boolean(body.diskExhaustion),
+    backupFailure: Boolean(body.backupFailure),
+    expiryHours: body.expiryHours == null ? null : Number(body.expiryHours),
+    degraded: Boolean(body.degraded),
+    versionDrift: Boolean(body.versionDrift),
+    stale: Boolean(body.stale),
+    missingDescription: Boolean(body.missingDescription),
+    lowConfidence: Boolean(body.lowConfidence),
+  });
+  ctx.waitUntil(audit(env, "incident.opened", { id: incident.id, severity: incident.severity }, new Date().toISOString()));
+  return v1Data(request, serializeIncident(incident), undefined, 201);
+}
+
+async function incidentDetail(request: Request, env: Env, id: string): Promise<Response> {
+  const incident = await getIncident(env, id);
+  if (!incident) return v1Error(request, "not_found", "Incident not found.", 404);
+  return v1Data(request, serializeIncident(incident));
+}
+
+async function patchIncident(request: Request, env: Env, id: string): Promise<Response> {
+  const body = await readObject(request);
+  const version = Number(body?.version);
+  if (!body || !Number.isInteger(version) || version < 1) return v1Error(request, "invalid_version", "version is required for Incident updates.", 400);
+  try {
+    const incident = await updateIncident(env, id, {
+      version,
+      status: body.status === undefined ? undefined : String(body.status),
+      ownerUserId: body.ownerUserId === undefined ? undefined : body.ownerUserId === null ? null : String(body.ownerUserId),
+      severity: body.severity === undefined ? undefined : String(body.severity) as IncidentSeverity,
+    });
+    if (!incident) return v1Error(request, "not_found", "Incident not found.", 404);
+    return v1Data(request, serializeIncident(incident));
+  } catch (error) {
+    if (error instanceof Error && error.message === "incident_version_conflict") return v1Error(request, "version_conflict", "Incident changed since it was loaded.", 409);
+    if (error instanceof Error && error.message === "invalid_incident_status") return v1Error(request, "invalid_status", "Incident status is invalid.", 400);
+    if (error instanceof Error && error.message === "invalid_incident_severity") return v1Error(request, "invalid_severity", "Incident severity is invalid.", 400);
+    throw error;
+  }
 }
 
 async function sources(request: Request, env: Env): Promise<Response> {
@@ -312,9 +521,9 @@ function openApi(request: Request): Response {
   const origin = new URL(request.url).origin;
   const paths: Record<string, unknown> = {};
   for (const [path, methods] of Object.entries({
-    "/overview": ["get"], "/resource-snapshots/current": ["get"], "/resource-snapshots": ["post"], "/sources": ["get"], "/sources/{id}": ["patch"], "/resources": ["get"], "/resources/{id}": ["get", "patch"],
-    "/export/assets.ndjson": ["get"], "/scans": ["post"], "/scans/{id}": ["get"], "/scans/{id}/cancel": ["post"], "/scans/{id}/retry": ["post"],
-    "/resource-links": ["get"], "/resource-links/{id}": ["patch"], "/service-keys": ["get", "post"], "/service-keys/{id}": ["delete"], "/service-keys/{id}/rotate": ["post"],
+    "/overview": ["get"], "/resource-snapshots/current": ["get"], "/resource-snapshots": ["post"], "/deployment-requirements/{projectId}": ["get", "patch"], "/placement-recommendations/{projectId}": ["get"], "/sources": ["get"], "/sources/{id}": ["patch"], "/resources": ["get"], "/resources/{id}": ["get", "patch"],
+    "/export/assets.ndjson": ["get"], "/audit/export.ndjson": ["get"], "/repository-audit/runs": ["get"], "/repository-audit/repositories": ["get"], "/repository-audit/repositories/{id}": ["get"], "/deployment-evidence": ["get"], "/server-status": ["get"], "/scans": ["post"], "/scans/{id}": ["get"], "/scans/{id}/cancel": ["post"], "/scans/{id}/retry": ["post"],
+    "/resource-links": ["get"], "/resource-links/{id}": ["patch"], "/incidents": ["get", "post"], "/incidents/{id}": ["get", "patch"], "/service-keys": ["get", "post"], "/service-keys/{id}": ["delete"], "/service-keys/{id}/rotate": ["post"],
     "/tasks": ["get", "post"], "/tasks/{id}": ["get", "patch"], "/tasks/{id}/transition": ["post"], "/tasks/{id}/comments": ["post"], "/tasks/{id}/dependencies": ["post"], "/tasks/gantt": ["get"],
     "/task-people": ["get", "post"], "/task-people/{id}": ["patch"], "/task-milestones": ["get", "post"], "/task-milestones/{id}": ["patch"], "/task-views": ["get", "post"], "/task-views/{id}": ["delete"],
   })) paths[path] = Object.fromEntries(methods.map((method) => [method, { responses: { "200": { description: "Success" } } }]));
@@ -324,8 +533,13 @@ function openApi(request: Request): Response {
 function serializeAsset(row: Record<string, unknown>): Record<string, unknown> {
   return { ...row, metadata: parseJson(row.metadata, {}), tags: parseJson(row.tags, []), ignored: Boolean(row.ignored), pinned: Boolean(row.pinned) };
 }
+function serializeRepositorySnapshot(row: Record<string, unknown>): Record<string, unknown> {
+  return { ...row, local_paths: parseJson(row.local_paths, []), topics: parseJson(row.topics, []), github_metadata: parseJson(row.github_metadata, {}), scan_evidence: parseJson(row.scan_evidence, []), hygiene: parseJson(row.hygiene, {}), deployment_evidence: parseJson(row.deployment_evidence, []), dirty: Boolean(row.dirty), archived: Boolean(row.archived), fork: Boolean(row.fork) };
+}
 function parseConnector(row: Record<string, unknown>): Record<string, unknown> { return { ...row, enabled: Boolean(row.enabled), config: parseJson(row.config, {}) }; }
 function serializeServiceKey(row: Record<string, unknown>): Record<string, unknown> { return { ...row, scopes: parseJson(row.scopes, []), connector_ids: parseJson(row.connector_ids, []), allowed_providers: parseJson(row.allowed_providers, []), allowed_accounts: parseJson(row.allowed_accounts, []) }; }
+function serializeIncident(row: Record<string, unknown>): Record<string, unknown> { return { ...row, evidence: parseJson(row.evidence, []), recurrence_count: Number(row.recurrence_count ?? 0), version: Number(row.version ?? 0) }; }
+function serializeRequirements(row: Record<string, unknown>): Record<string, unknown> { return { ...row, stateful: Boolean(row.stateful), networkRequirements: parseJson(row.network_requirements, []), storageRequirements: parseJson(row.storage_requirements, []), minCpu: row.min_cpu == null ? null : Number(row.min_cpu), minMemoryMb: row.min_memory_mb == null ? null : Number(row.min_memory_mb), minDiskGb: row.min_disk_gb == null ? null : Number(row.min_disk_gb), requiredRegion: row.required_region ?? null, maxDowntimeMinutes: row.max_downtime_minutes == null ? null : Number(row.max_downtime_minutes), healthCheckUrl: row.health_check_url ?? null, rollbackStrategy: row.rollback_strategy ?? null, backupPolicy: row.backup_policy ?? null, confirmedBy: row.confirmed_by ?? null, confirmedAt: row.confirmed_at ?? null }; }
 function parseJson(value: unknown, fallback: unknown): any { try { return JSON.parse(String(value ?? "")); } catch { return fallback; } }
 function isPlainObject(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 function containsSecretField(value: Record<string, unknown>): boolean { return Object.entries(value).some(([key, nested]) => SECRET_FIELD.test(key) || (isPlainObject(nested) && containsSecretField(nested))); }

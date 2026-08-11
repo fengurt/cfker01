@@ -1,5 +1,6 @@
 import { isValidRequestOrigin, requireAdminToken } from "../lib/auth";
 import { ensurePeriodicResourceSnapshot } from "../lib/resource-snapshot";
+import { openIncident, resolveIncidentsForEntity } from "../lib/incident-store";
 
 type MonitorResult = {
   entityType: "server" | "deployment";
@@ -63,6 +64,11 @@ async function storeResults(request: Request, env: Env, ctx: ExecutionContext) {
   for (const result of body.results) {
     if (!result || !["server", "deployment"].includes(result.entityType) || !result.entityId || !["healthy", "reachable", "degraded", "down"].includes(result.status)) continue;
     const state = await updateEntity(env, result, now);
+    if (state === "down" || state === "degraded") {
+      ctx.waitUntil(recordAvailabilityIncident(env, result, state));
+    } else if (state === "healthy" || state === "reachable") {
+      ctx.waitUntil(resolveIncidentsForEntity(env, result.entityType, result.entityId));
+    }
     if (state === "healthy" || state === "reachable") healthy += 1;
     else if (state === "down") down += 1;
     else degraded += 1;
@@ -94,11 +100,29 @@ async function updateEntity(env: Env, result: MonitorResult, fallbackTime: strin
   return state;
 }
 
+async function recordAvailabilityIncident(env: Env, result: MonitorResult, state: string): Promise<void> {
+  const criticalProjectDown = result.entityType === "deployment" && Boolean((await env.MGMT_DB.prepare(`SELECT r.criticality FROM deployments d LEFT JOIN project_deployment_requirements r ON r.project_id=d.project_id WHERE d.id=?1`).bind(result.entityId).first<{ criticality: string | null }>())?.criticality === "critical");
+  await openIncident(env, {
+    entityType: result.entityType,
+    entityId: result.entityId,
+    check: "availability",
+    rootCause: result.errorCode || `status_${state}`,
+    title: `${result.entityType} ${state}`,
+    summary: result.errorCode ? `Availability probe reported ${result.errorCode}.` : `Availability probe reported ${state}.`,
+    evidence: [result.errorCode || state, result.httpStatus ? `http_${result.httpStatus}` : "no_http_status"],
+    criticalProjectDown,
+    degraded: state === "degraded",
+    productionImpact: result.entityType === "deployment",
+  });
+}
+
 async function summary(env: Env) {
   const [servers, deployments, openEvents, run] = await Promise.all([
     env.MGMT_DB.prepare(`SELECT COALESCE(health_status,'unverified') status,COUNT(*) count FROM servers GROUP BY COALESCE(health_status,'unverified')`).all(),
     env.MGMT_DB.prepare(`SELECT COALESCE(health_status,'unverified') status,COUNT(*) count FROM deployments GROUP BY COALESCE(health_status,'unverified')`).all(),
-    env.MGMT_DB.prepare(`SELECT COUNT(*) count FROM availability_events WHERE resolved_at IS NULL`).first<{ count: number }>(),
+    // A single failing target can have many historical rows. The dashboard
+    // needs the number of affected entities, not the number of observations.
+    env.MGMT_DB.prepare(`SELECT COUNT(DISTINCT entity_type || ':' || entity_id) count FROM availability_events WHERE resolved_at IS NULL`).first<{ count: number }>(),
     env.MGMT_DB.prepare(`SELECT * FROM monitor_runs ORDER BY started_at DESC LIMIT 1`).first(),
   ]);
   return json({ data: { servers: servers.results ?? [], deployments: deployments.results ?? [], openEvents: Number(openEvents?.count ?? 0), latestRun: run ?? null } });
@@ -106,7 +130,14 @@ async function summary(env: Env) {
 
 async function events(env: Env, url: URL) {
   const open = url.searchParams.get("open");
-  const where = open === "true" ? "WHERE e.resolved_at IS NULL" : "";
+  const conditions = [
+    ...(open === "true" ? ["e.resolved_at IS NULL"] : []),
+    "NOT EXISTS (SELECT 1 FROM availability_events newer WHERE newer.entity_type=e.entity_type AND newer.entity_id=e.entity_id AND newer.created_at>e.created_at" +
+      (open === "true" ? " AND newer.resolved_at IS NULL" : "") + ")",
+  ];
+  const where = `WHERE ${conditions.join(" AND ")}`;
+  // Return only the newest row per entity. This keeps the admin status view
+  // useful even after a long-lived outage has produced many observations.
   const rows = await env.MGMT_DB.prepare(`SELECT e.*,COALESCE(s.name,p.name,e.entity_id) entity_name FROM availability_events e LEFT JOIN servers s ON e.entity_type='server' AND s.id=e.entity_id LEFT JOIN deployments d ON e.entity_type='deployment' AND d.id=e.entity_id LEFT JOIN catalog_projects p ON p.id=d.project_id ${where} ORDER BY e.created_at DESC LIMIT 100`).all();
   return json({ data: rows.results ?? [] });
 }

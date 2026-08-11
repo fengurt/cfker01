@@ -34,7 +34,7 @@ async function execute(job) {
   const started = new Date().toISOString();
   console.log(JSON.stringify({ event: "scanner.job.started", jobId: job.id, connectorId: claim.connectorId, provider: claim.provider, at: started }));
   try {
-    await exec(process.execPath, ["./scripts/discover-assets.mjs", "--upload"], {
+    const child = await exec(process.execPath, ["./scripts/discover-assets.mjs", "--upload"], {
       timeout,
       maxBuffer: 20_000_000,
       env: {
@@ -45,9 +45,18 @@ async function execute(job) {
         ASSET_DISCOVERY_OUTPUT: `/data/assets/${claim.provider}-${job.id}.json`,
       },
     });
-    await writeFile("/data/assets/last-success", `${new Date().toISOString()}\n`, { mode: 0o600 });
-    await rm("/data/assets/last-error", { force: true });
-    console.log(JSON.stringify({ event: "scanner.job.completed", jobId: job.id, provider: claim.provider, at: new Date().toISOString() }));
+    const summary = [...String(child.stdout || "").trim().split("\n")].reverse().map((line) => { try { return JSON.parse(line); } catch { return null; } }).find(Boolean);
+    if (summary?.uploadStatus === "partial") {
+      await writeFile("/data/assets/last-partial", `${new Date().toISOString()}\n`, { mode: 0o600 });
+      await writeFile("/data/assets/last-error", `${new Date().toISOString()} partial ${JSON.stringify(summary.errors || []).slice(0, 500)}\n`, { mode: 0o600 });
+      console.warn(JSON.stringify({ event: "scanner.job.partial", jobId: job.id, provider: claim.provider, at: new Date().toISOString() }));
+    } else if (summary?.uploadStatus === "completed") {
+      await writeFile("/data/assets/last-success", `${new Date().toISOString()}\n`, { mode: 0o600 });
+      await rm("/data/assets/last-error", { force: true });
+      console.log(JSON.stringify({ event: "scanner.job.completed", jobId: job.id, provider: claim.provider, at: new Date().toISOString() }));
+    } else {
+      throw new Error("scanner_upload_status_missing");
+    }
   } catch (error) {
     await failUnstartedRun(job, error);
     await recordError(job.id, error);

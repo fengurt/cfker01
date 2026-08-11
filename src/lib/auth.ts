@@ -6,6 +6,20 @@ const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const DEVICE_TTL_SECONDS = 60 * 60 * 24 * 90;
 const LOCK_SECONDS = 15 * 60;
 
+export type AdminRole = "viewer" | "editor" | "operator" | "system_admin";
+const ADMIN_ROLE_RANK: Record<AdminRole, number> = {
+  viewer: 10,
+  editor: 20,
+  operator: 30,
+  system_admin: 40,
+};
+
+/** Return true when `role` has at least the requested administrative capability. */
+export function hasAdminRole(role: string | null | undefined, minimum: AdminRole): boolean {
+  if (!role || !(minimum in ADMIN_ROLE_RANK)) return false;
+  return (ADMIN_ROLE_RANK[role as AdminRole] ?? 0) >= ADMIN_ROLE_RANK[minimum];
+}
+
 export async function requireAdminToken(
   request: Request,
   env: Env,
@@ -16,8 +30,23 @@ export async function requireAdminToken(
     token && env.ADMIN_TOKEN && (await timingSafeEqual(token, env.ADMIN_TOKEN)),
   );
   const session = await readAdminSession(request, env);
-  if (!bearerValid && !session)
+  if (!bearerValid && (!session || !hasAdminRole(session.role, "system_admin")))
     return Response.json({ error: "unauthorized" }, { status: 401 });
+  return null;
+}
+
+/** Authenticate a session or ADMIN_TOKEN for APIs with a role-aware policy. */
+export async function requireAdminRole(
+  request: Request,
+  env: Env,
+  minimum: AdminRole,
+): Promise<Response | null> {
+  const header = request.headers.get("Authorization");
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
+  if (token && env.ADMIN_TOKEN && (await timingSafeEqual(token, env.ADMIN_TOKEN))) return null;
+  const session = await readAdminSession(request, env);
+  if (!session) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (!hasAdminRole(session.role, minimum)) return Response.json({ error: "forbidden" }, { status: 403 });
   return null;
 }
 
@@ -44,14 +73,16 @@ export async function readAdminSession(
           role?: string;
           exp?: number;
         };
+        const role = value.role;
         if (
           value.uid &&
           value.phone &&
-          value.role === "system_admin" &&
+          role &&
+          hasAdminRole(role, "viewer") &&
           value.exp &&
           value.exp > Math.floor(Date.now() / 1000)
         )
-          return { userId: value.uid, phone: value.phone, role: value.role };
+          return { userId: value.uid, phone: value.phone, role };
       } catch {}
   }
   return readTrustedDevice(request, env);
@@ -423,7 +454,7 @@ async function readTrustedDevice(
   if (
     !row ||
     !row.active ||
-    row.role !== "system_admin" ||
+    !hasAdminRole(row.role, "viewer") ||
     row.user_agent_hash !== (await userAgentHash(request, env))
   )
     return null;

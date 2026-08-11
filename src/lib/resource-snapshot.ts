@@ -1,3 +1,4 @@
+import { FRESHNESS_SLA_SECONDS } from "./operational-truth";
 type Row = Record<string, unknown>;
 
 const SCHEMA_VERSION = "resource-snapshot-v1";
@@ -18,7 +19,7 @@ export type ResourceSnapshot = {
 export async function createResourceSnapshot(env: Env, trigger: "schedule" | "manual" = "manual"): Promise<ResourceSnapshot> {
   const [serversResult, eventsResult] = await Promise.all([
     env.MGMT_DB.prepare(`
-      SELECT s.id,s.name,s.provider,s.architecture,s.cpu,s.memory_mb,s.disk_gb,s.operating_system,s.due_at,
+      SELECT s.id,s.name,s.provider,s.region,s.architecture,s.cpu,s.memory_mb,s.disk_gb,s.operating_system,s.due_at,
         s.health_status,s.manual_status,s.last_checked_at,s.last_latency_ms,
         (SELECT COUNT(*) FROM deployments d WHERE d.server_id=s.id AND d.status!='disabled') deployment_count,
         (SELECT COUNT(*) FROM discovered_assets a WHERE a.server_id=s.id AND a.kind IN ('runtime_service','compose_project') AND a.status!='stale') service_count,
@@ -27,7 +28,7 @@ export async function createResourceSnapshot(env: Env, trigger: "schedule" | "ma
         (SELECT last_seen_at FROM discovered_assets a WHERE a.server_id=s.id AND a.kind='server_runtime' AND a.status!='stale' ORDER BY a.last_seen_at DESC LIMIT 1) runtime_at
       FROM servers s ORDER BY s.name
     `).all<Row>(),
-    env.MGMT_DB.prepare(`SELECT COUNT(*) count FROM availability_events WHERE resolved_at IS NULL`).first<{ count: number }>(),
+    env.MGMT_DB.prepare(`SELECT COUNT(DISTINCT entity_type || ':' || entity_id) count FROM availability_events WHERE resolved_at IS NULL`).first<{ count: number }>(),
   ]);
   const generatedAt = new Date().toISOString();
   const servers = (serversResult.results ?? []).map(serializeServer);
@@ -97,11 +98,11 @@ function serializeServer(row: Row) {
   const loadRatio = ratio(number(runtime.load1), cpu);
   const pressure = [memoryRatio, diskRatio, loadRatio].filter((value): value is number => value !== null).reduce((max, value) => Math.max(max, value), -1);
   const runtimeAt = string(row.runtime_at);
-  const fresh = runtimeAt ? Date.now() - Date.parse(runtimeAt) <= 6 * 60 * 60 * 1000 : false;
+  const fresh = runtimeAt ? Date.now() - Date.parse(runtimeAt) <= FRESHNESS_SLA_SECONDS.runtime * 1000 : false;
   const status = normalizedStatus(row);
   const eligible = status === "healthy" && fresh && pressure >= 0 && String(row.manual_status ?? "") !== "maintenance";
   return {
-    id: string(row.id), name: string(row.name), provider: serverClass(String(row.provider ?? "")), architecture: string(row.architecture), operatingSystem: string(row.operating_system), status,
+    id: string(row.id), name: string(row.name), provider: serverClass(String(row.provider ?? "")), region: string(row.region), architecture: string(row.architecture), operatingSystem: string(row.operating_system), status,
     capacity: { vcpu: cpu || null, memoryGiB: gib(memoryTotal), diskGiB: gib(diskTotal), dueAt: string(row.due_at) },
     runtime: { collectedAt: runtimeAt, memoryUsedRatio: memoryRatio, diskUsedRatio: diskRatio, loadPerCpu: loadRatio, latencyMs: number(row.last_latency_ms) || null },
     workload: { deployments: number(row.deployment_count), services: number(row.service_count), containers: number(row.container_count) },

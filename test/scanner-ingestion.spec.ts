@@ -86,6 +86,56 @@ describe("versioned scanner ingestion", () => {
     expect(invalidCursor.body).toMatchObject({ error: { code: "invalid_cursor" } });
     await waitOnExecutionContext(ctx);
   });
+
+  it("retains assets when provider relationships reference unknown D1 records", async () => {
+    const ctx = createExecutionContext();
+    const createdKey = await call("/api/admin/v1/service-keys", {
+      method: "POST", headers: adminHeaders(), body: JSON.stringify({ name: `relationship-test-${crypto.randomUUID()}`, scopes: ["jobs:poll", "jobs:claim", "ingest:write"], connectorIds: ["local-cpro01"], providers: ["local"], accounts: ["cpro01"] }),
+    }, ctx);
+    const key = createdKey.body.data.key as string;
+    const scannerHeaders = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+    const created = await call("/api/admin/v1/scans", { method: "POST", headers: adminHeaders(), body: JSON.stringify({ sourceId: "local-cpro01", mode: "full" }) }, ctx);
+    const jobId = created.body.data[0].id as string;
+    await call(`/api/ingest/v1/jobs/${jobId}/claim`, { method: "POST", headers: scannerHeaders, body: "{}" }, ctx);
+    const started = await call("/api/ingest/v1/runs", { method: "POST", headers: scannerHeaders, body: JSON.stringify({ jobId, schemaVersion: "asset-discovery-v1", fingerprint: crypto.randomUUID() }) }, ctx);
+    const runId = started.body.data.id as string;
+    const batch = await call(`/api/ingest/v1/runs/${runId}/batches/0`, {
+      method: "PUT", headers: scannerHeaders, body: JSON.stringify({ assets: [{
+        provider: "local", accountId: "cpro01", kind: "repository", externalId: `relationship-${crypto.randomUUID()}`, name: "relationship-fixture", status: "available",
+        serverId: "provider-instance-that-is-not-a-d1-server", projectId: "project-that-is-not-in-d1", metadata: { headSha: "abc123" },
+      }] }),
+    }, ctx);
+    expect(batch.response.status).toBe(201);
+    const assetId = batch.body.data.runId ? (await env.MGMT_DB.prepare("SELECT id FROM discovered_assets WHERE name='relationship-fixture' ORDER BY created_at DESC LIMIT 1").first<{ id: string }>())?.id : null;
+    expect(assetId).toBeTruthy();
+    const stored = await env.MGMT_DB.prepare("SELECT server_id,project_id,metadata FROM discovered_assets WHERE id=?1").bind(assetId).first<{ server_id: string | null; project_id: string | null; metadata: string }>();
+    expect(stored?.server_id).toBeNull();
+    expect(stored?.project_id).toBeNull();
+    expect(JSON.parse(stored?.metadata ?? "{}")).toMatchObject({ relationshipCandidates: expect.arrayContaining([
+      expect.objectContaining({ type: "server", value: "provider-instance-that-is-not-a-d1-server" }),
+      expect.objectContaining({ type: "project", value: "project-that-is-not-in-d1" }),
+    ]) });
+    await waitOnExecutionContext(ctx);
+  });
+
+  it("exposes repository audit and server status through the admin API", async () => {
+    const ctx = createExecutionContext();
+    const canonicalKey = `github.com/example/audit-${crypto.randomUUID().slice(0, 8)}`;
+    const imported = await call("/admin/repository-reviews/snapshots", {
+      method: "POST", headers: adminHeaders(), body: JSON.stringify({
+        canonicalKey, githubOwner: "example", githubRepo: "audit", repositoryUrl: "https://github.com/example/audit", fingerprint: crypto.randomUUID(), dossier: "{\"identity\":{\"key\":\"safe\"}}",
+        syncStatus: "synced", hygiene: { status: "pass", checks: { readme: "pass" } }, deploymentStatus: "not_checked", deploymentEvidence: [],
+      }),
+    }, ctx);
+    expect(imported.response.status).toBe(200);
+    const list = await call(`/api/admin/v1/repository-audit/repositories?q=${encodeURIComponent(canonicalKey)}&limit=5`, { headers: adminHeaders() }, ctx);
+    expect(list.response.status).toBe(200);
+    expect(list.body.data).toEqual(expect.arrayContaining([expect.objectContaining({ canonical_key: canonicalKey, sync_status: "synced", hygiene: expect.objectContaining({ status: "pass" }) })]));
+    const servers = await call("/api/admin/v1/server-status", { headers: adminHeaders() }, ctx);
+    expect(servers.response.status).toBe(200);
+    expect(Array.isArray(servers.body.data)).toBe(true);
+    await waitOnExecutionContext(ctx);
+  });
 });
 
 async function call(path: string, init: RequestInit, ctx: ExecutionContext): Promise<{ response: Response; body: any }> {

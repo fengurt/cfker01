@@ -13,9 +13,9 @@ if [[ -f "${ENV_FILE}" ]]; then
 fi
 
 : "${OP_TENCENT_VAULT:=Personal}"
-: "${OP_TENCENT_ITEM:=Tencent-APUCH-oss}"
-: "${OP_TENCENT_SECRET_ID_REF:=op://Personal/Tencent-APUCH-oss/add more/tencent-SecretId-01}"
-: "${OP_TENCENT_SECRET_KEY_REF:=op://Personal/Tencent-APUCH-oss/add more/tencent-SecretKey-01}"
+: "${OP_TENCENT_ITEM:=APUCH Tencent CLI Resource}"
+: "${OP_TENCENT_SECRET_ID_REF:=op://Personal/APUCH Tencent CLI Resource/tencent_secret_id}"
+: "${OP_TENCENT_SECRET_KEY_REF:=op://Personal/APUCH Tencent CLI Resource/tencent_secret_key}"
 : "${TENCENT_REGION:=ap-guangzhou}"
 : "${TENCENT_APP_ID:=1308586823}"
 : "${TENCENT_ACCOUNT:=legacy}"

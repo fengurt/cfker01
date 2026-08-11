@@ -34,8 +34,9 @@ if(process.env.DNS_PROBE_ENABLED!=="false"){
 const links=buildRepositoryLinks();
 const result={version:"asset-discovery-v1",generatedAt:new Date().toISOString(),durationMs:Date.now()-started,startedAt,assets,links,accounts,errors,summary:summarize(assets)};
 await mkdir(resolve(output,".."),{recursive:true});await writeFile(output,`${JSON.stringify(result,null,2)}\n`);
-if(args.has("--upload"))await upload(result);
-console.log(JSON.stringify({output,count:assets.length,summary:result.summary,errors},null,2));
+let uploadStatus=args.has("--upload")?"completed":"not_requested";
+if(args.has("--upload")){const uploaded=await upload(result);uploadStatus=uploaded?.data?.status||"completed";}
+console.log(JSON.stringify({output,count:assets.length,summary:result.summary,errors,uploadStatus},null,2));
 
 async function discoverTencent(){
   const account=await jsonCommand("tccli",["cam","GetUserAppId","--region","ap-guangzhou"]),accountId=String(account.AppId||account.OwnerUin||"default");accounts.push({provider:"tencent",accountId});
@@ -73,6 +74,23 @@ async function discoverTencent(){
   await discoverTencentTat(accountId,instances);
   try{const zones=await jsonCommand("tccli",["teo","DescribeZones","--region","ap-guangzhou"]);for(const zone of zones.Zones||[])assets.push(a("tencent",accountId,"edgeone_zone",zone.ZoneId,zone.ZoneName||zone.ZoneId,zone.Status||"unknown",null,zone.ZoneName?`https://${zone.ZoneName}`:null,{type:zone.Type,planId:zone.PlanId,createdAt:zone.CreatedOn,modifiedAt:zone.ModifiedOn}));}catch(error){errors.push(err("tencent","edgeone",error));}
   try{const text=await textCommand("coscli",["ls","--disable-log"]);for(const line of text.split("\n")){const match=line.match(/^\s{2}(\S+)\s+\|\s+(\S+)\s+\|\s+([^|]+?)\s*$/);if(match)assets.push(a("tencent",accountId,"cos_bucket",match[1],match[1],"available",match[2],null,{createdAt:match[3].trim()}));}}catch(error){errors.push(err("tencent","cos",error));}
+  await discoverTencentBilling(accountId,instances);
+}
+
+async function discoverTencentBilling(accountId,instances){
+  const month=new Date().toISOString().slice(0,7);
+  try{
+    const balance=await jsonCommand("tccli",["billing","DescribeAccountBalance","--region","ap-guangzhou"]),response=balance.Response||balance;
+    assets.push(a("tencent",accountId,"billing_account",accountId,"Tencent Cloud billing account","available",null,null,{accountId,balanceCNY:Number(response.RealBalance||0)/100,frozenCNY:Number(response.OweAmount||0)/100,month,source:"DescribeAccountBalance"}));
+  }catch(error){errors.push(err("tencent","billing:balance",error));}
+  try{
+    const rows=await paginatedTencent("billing","DescribeBillResourceSummary",["--Month",month,"--NeedRecordNum","1"],"ResourceSummarySet",1000,"Total");
+    const instanceById=new Map(instances.map(value=>[String(value.item.InstanceId),value]));
+    for(const row of rows){
+      const resourceId=String(row.ResourceId||row.ResourceName||crypto.randomUUID()),instance=instanceById.get(resourceId),business=String(row.BusinessCode||"");
+      assets.push(a("tencent",accountId,"billing_resource",`${month}:${resourceId}`,String(row.ResourceName||resourceId),"available",row.RegionName||null,null,{month,resourceId,businessCode:business,businessCodeName:row.BusinessCodeName||null,productCodeName:row.ProductCodeName||null,payMode:row.PayModeName||null,totalCost:Number(row.TotalCost),realTotalCost:Number(row.RealTotalCost),feeBeginTime:row.FeeBeginTime||null,feeEndTime:row.FeeEndTime||null,configDesc:row.ConfigDesc||null},resourceId,instance?.serverId||null));
+    }
+  }catch(error){errors.push(err("tencent","billing:resources",error));}
 }
 
 async function discoverTencentTat(accountId,instances){
@@ -211,7 +229,7 @@ async function dockerApiContainers(){const base=new URL(process.env.DOCKER_API_U
 function httpJson(base,path){return new Promise((resolvePromise,reject)=>{const request=http.get({hostname:base.hostname,port:base.port||80,path,timeout:30_000},response=>{let body="";response.setEncoding("utf8");response.on("data",chunk=>body+=chunk);response.on("end",()=>{if((response.statusCode||500)>=400)return reject(new Error(`Docker API ${response.statusCode}`));try{resolvePromise(JSON.parse(body));}catch(error){reject(error);}});});request.on("timeout",()=>request.destroy(new Error("Docker API timeout")));request.on("error",reject);});}
 async function jsonCommand(command,argv){return JSON.parse(await textCommand(command,argv));}async function textCommand(command,argv,maxBuffer=10_000_000){return(await exec(command,argv,{maxBuffer,env:process.env})).stdout.trim();}
 async function loadPriorDnsProbes(){const token=process.env.ADMIN_TOKEN;if(!token)return new Map();const base=process.env.WORKER_URL||"http://127.0.0.1:8787",result=new Map();try{for(let page=1;;page++){const response=await fetch(`${base}/admin/assets?kind=dns_record&per_page=100&page=${page}`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)break;const body=await response.json();for(const asset of body.data||[])if(asset.metadata?.probe?.version===1)result.set(asset.external_id,asset.metadata.probe);if(page>=Number(body.meta?.pages||1))break;}}catch{}return result;}
-async function upload(data){if(process.env.SCANNER_KEY&&process.env.SCAN_JOB_ID)return uploadV1(data);return uploadLegacy(data);}
+async function upload(data){if(process.env.SCANNER_KEY&&process.env.SCAN_JOB_ID)return uploadV1(data);await uploadLegacy(data);return{data:{status:data.errors.length?"partial":"completed"}};}
 async function uploadV1(data){const base=process.env.WORKER_URL||"http://127.0.0.1:8787",token=process.env.SCANNER_KEY,headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"},fingerprint=createHash("sha256").update(JSON.stringify(data.assets.map(({provider,accountId,kind,externalId,status,metadata})=>({provider,accountId,kind,externalId,status,metadata})))).digest("hex");let runId;try{const started=await api(`${base}/api/ingest/v1/runs`,{method:"POST",headers,body:JSON.stringify({jobId:process.env.SCAN_JOB_ID,schemaVersion:data.version,fingerprint})});runId=started.data.id;for(let index=0;index*200<data.assets.length;index+=1)await api(`${base}/api/ingest/v1/runs/${runId}/batches/${index}`,{method:"PUT",headers,body:JSON.stringify({assets:data.assets.slice(index*200,(index+1)*200)})});const errors=data.errors.filter(error=>!process.env.SCANNER_CONNECTOR_PROVIDER||error.provider===process.env.SCANNER_CONNECTOR_PROVIDER);return api(`${base}/api/ingest/v1/runs/${runId}/complete`,{method:"POST",headers,body:JSON.stringify({authoritative:errors.length===0,errors,links:data.links,durationMs:data.durationMs})});}catch(error){if(runId)await fetch(`${base}/api/ingest/v1/runs/${runId}/fail`,{method:"POST",headers,body:JSON.stringify({code:"scanner_upload_failed",message:String(error?.message||error).slice(0,1000)})}).catch(()=>{});throw error;}}
 async function uploadLegacy(data){const base=process.env.WORKER_URL||"http://127.0.0.1:8787",token=process.env.ADMIN_TOKEN;if(!token)throw new Error("SCANNER_KEY with SCAN_JOB_ID, or legacy ADMIN_TOKEN, is required for --upload");const grouped=new Map();for(const asset of data.assets){const key=`${asset.provider}\0${asset.accountId}`,group=grouped.get(key)||{provider:asset.provider,accountId:asset.accountId,assets:[]};group.assets.push(asset);grouped.set(key,group);}for(const group of grouped.values())for(let i=0;i<group.assets.length;i+=100){const complete=i+100>=group.assets.length,providerErrors=data.errors.filter(error=>error.provider===group.provider),response=await fetch(`${base}/admin/assets/import`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({...group,assets:group.assets.slice(i,i+100),scanAt:data.generatedAt,complete,staleAfterMs:group.provider==="docker"?3_600_000:172_800_000,run:complete?{startedAt:data.startedAt,durationMs:data.durationMs,discoveredCount:group.assets.length,errors:providerErrors}:undefined})});if(!response.ok)throw new Error(`${group.provider}/${group.accountId}: ${response.status} ${await response.text()}`);}if(data.links?.length){const response=await fetch(`${base}/admin/assets/import`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({provider:"links",accountId:"default",assets:[],links:data.links})});if(!response.ok)throw new Error(`links: ${response.status} ${await response.text()}`);}}
 async function api(url,options){const response=await fetch(url,options),text=await response.text();if(!response.ok)throw new Error(`${response.status} ${text.slice(0,1000)}`);return text?JSON.parse(text):{};}

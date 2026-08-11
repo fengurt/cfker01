@@ -208,6 +208,7 @@ let locale = localStorage.getItem("tableai-locale") || "zh-CN",
   repositoryPage = 1,
   repositoryPages = 1,
   assetSummary = null,
+  billingSummary = null,
   monitorSummary = null,
   projectRequestController = null,
   filterTimer = null,
@@ -707,11 +708,41 @@ async function loadServers() {
     request("/admin/monitor/summary").catch(() => ({ data: null })),
   ]);
   servers = body.data;
+  billingSummary = body.meta?.billing || null;
   monitorSummary = monitor.data;
   populateServerOptions(servers);
   renderServers();
+  await loadIncidentInbox();
   await loadExpiringResources();
 }
+async function loadIncidentInbox() {
+  const target = $("#incident-inbox-list"), summary = $("#incident-inbox-summary");
+  if (!target) return;
+  try {
+    const body = await request("/api/admin/v1/incidents?status=open&limit=20"), items = body.data || [];
+    target.replaceChildren();
+    summary.textContent = locale === "zh-CN" ? `${items.length} 个未恢复事件` : `${items.length} open incidents`;
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "incident-empty"; empty.textContent = locale === "zh-CN" ? "当前没有需要处理的事件。" : "No incidents need attention."; target.append(empty); return;
+    }
+    for (const incident of items) {
+      const card = document.createElement("article"); card.className = "incident-card"; card.dataset.severity = incident.severity || "p3";
+      const severity = document.createElement("strong"); severity.className = "incident-severity"; severity.textContent = String(incident.severity || "p3").toUpperCase();
+      const content = document.createElement("div"), title = document.createElement("h3"), detail = document.createElement("p");
+      title.textContent = incident.title || incident.entity_id || "Incident"; detail.textContent = `${incident.summary || ""} · ${formatDateTime(incident.last_detected_at)}`; content.append(title, detail);
+      const acknowledge = document.createElement("button"); acknowledge.type = "button"; acknowledge.textContent = locale === "zh-CN" ? "确认" : "Acknowledge"; acknowledge.dataset.incidentId = incident.id; acknowledge.dataset.incidentVersion = incident.version;
+      card.append(severity, content, acknowledge); target.append(card);
+    }
+  } catch (error) {
+    summary.textContent = locale === "zh-CN" ? "事件读取失败" : "Incident feed unavailable";
+    target.replaceChildren(); const empty = document.createElement("p"); empty.className = "incident-empty"; empty.textContent = error.message; target.append(empty);
+  }
+}
+$("#incident-inbox-list")?.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-incident-id]"); if (!button) return;
+  button.disabled = true;
+  try { await request(`/api/admin/v1/incidents/${encodeURIComponent(button.dataset.incidentId)}`, { method: "PATCH", body: JSON.stringify({ version: Number(button.dataset.incidentVersion), status: "acknowledged" }) }); await loadIncidentInbox(); } catch (error) { setNotice(error.message, true); button.disabled = false; }
+});
 async function loadResourceMonitoring() {
   await Promise.all([loadServers(), loadAssetSummary(), loadCloudAssets()]);
 }
@@ -925,9 +956,15 @@ function serverClass(server) {
     return locale === "zh-CN" ? "腾讯云" : "Tencent Cloud";
   return server.provider || "-";
 }
+function numericCpu(value) {
+  const direct = Number(value);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const match = String(value || "").match(/[0-9]+(?:\.[0-9]+)?/);
+  return match ? Number(match[0]) : 0;
+}
 function serverSpec(server) {
   const host = runtimeHost(server) || {},
-    cpu = Number(server.cpu || host.cpuCount || 0),
+    cpu = numericCpu(server.cpu) || numericCpu(host.cpuCount),
     memoryMb =
       Number(server.memory_mb || 0) || Number(host.memoryTotalKb || 0) / 1024,
     diskGb =
@@ -1075,7 +1112,7 @@ function renderFleetOverview(allDeployments, allRuntime) {
     identity.className = "fleet-capacity-name";
     link.href = `#server-${item.server.id}`;
     link.textContent = item.server.name;
-    detail.textContent = `${item.host.cpuCount || "-"} CPU / load ${item.host.load1 ?? "-"}`;
+    detail.textContent = `${serverSpec(item.server)} · load ${item.host.load1 ?? "-"}`;
     identity.append(link, detail);
     for (const [label, value, detailText] of [
       [
@@ -1153,6 +1190,60 @@ function renderFleetOverview(allDeployments, allRuntime) {
       ? "仅计算确定性项目、仓库和 IP 匹配；未确认关联不会自动写入。"
       : "Only deterministic project, repository, and IP matches are included; uncertain links stay unlinked.";
 }
+function serverRecommendation(server) {
+  const host = runtimeHost(server) || {};
+  const coverage = server.runtime_coverage || {};
+  const scannedAt = coverage.last_scanned_at ? Date.parse(coverage.last_scanned_at) : NaN;
+  const runtimeFresh = coverage.status === "scanned" && Number.isFinite(scannedAt) && Date.now() - scannedAt <= 15 * 60 * 1000;
+  if (!runtimeFresh)
+    return { tone: "unknown", label: locale === "zh-CN" ? "数据不足" : "Insufficient data", reason: locale === "zh-CN" ? "需要 15 分钟内的运行时采样，才可给出部署建议。" : "A runtime sample from the last 15 minutes is required for placement guidance." };
+  const memory = ratio(
+    Math.max(0, Number(host.memoryTotalKb || 0) - Number(host.memoryAvailableKb || 0)),
+    Number(host.memoryTotalKb || 0),
+  );
+  const disk = ratio(host.diskUsedBytes, host.diskTotalBytes);
+  const load = ratio(host.load1, host.cpuCount);
+  const pressure = Math.max(memory || 0, disk || 0, load || 0);
+  const state = fleetState(server);
+  if (state === "attention" || state === "unknown" && !host.cpuCount)
+    return { tone: "danger", label: locale === "zh-CN" ? "先恢复 / 暂不部署" : "Recover before deploying", reason: locale === "zh-CN" ? "服务器不可用或运行时采样已过期。" : "Unavailable or stale runtime sample." };
+  if (pressure >= 0.85)
+    return { tone: "warning", label: locale === "zh-CN" ? (dueState(server) === "is-warning" ? "优先新开服务器" : "评估升级") : (dueState(server) === "is-warning" ? "Open a new server" : "Review upgrade"), reason: locale === "zh-CN" ? `当前峰值使用率约 ${Math.round(pressure * 100)}%，建议先核对账单和规格。` : `Peak measured utilisation is about ${Math.round(pressure * 100)}%; verify billing and capacity first.` };
+  if (pressure < 0.5 && Number(server.deployment_count || 0) === 0)
+    return { tone: "healthy", label: locale === "zh-CN" ? "优先使用" : "Prefer for next deployment", reason: locale === "zh-CN" ? "采样容量充足且暂无登记部署。" : "Healthy capacity with no registered deployments." };
+  return { tone: "neutral", label: locale === "zh-CN" ? "保持" : "Keep", reason: locale === "zh-CN" ? "当前采样没有触发扩容条件。" : "Current sample does not trigger scaling." };
+}
+function renderServerCostPanel() {
+  const target = $("#server-cost-grid"), summary = $("#server-cost-summary");
+  if (!target || !summary) return;
+  target.replaceChildren();
+  const observed = servers.filter((server) => server.billing?.status === "observed");
+  const total = observed.reduce((sum, server) => sum + Number(server.billing?.monthlyCostCNY || 0), 0);
+  if (billingSummary?.status === "available") {
+    const balance = Number(billingSummary.balanceCNY);
+    const balanceText = Number.isFinite(balance) ? ` / ${locale === "zh-CN" ? "余额" : "balance"} ¥${balance.toFixed(2)}` : "";
+    summary.textContent = `${locale === "zh-CN" ? "腾讯云" : "Tencent Cloud"} ${billingSummary.month || ""} ${locale === "zh-CN" ? "已验证账单" : "verified billing"}${balanceText} · ${locale === "zh-CN" ? "服务器账单月已观测" : "observed server spend for bill month"} ¥${total.toFixed(2)}`;
+  } else {
+    summary.textContent = locale === "zh-CN" ? "未取得腾讯云账单；显示容量建议，不虚构价格。" : "Tencent billing is unavailable; capacity guidance is shown without invented prices.";
+  }
+  const ranked = [...servers].sort((left, right) => {
+    const rank = { danger: 0, warning: 1, healthy: 2, neutral: 3, unknown: 4 };
+    return rank[serverRecommendation(left).tone] - rank[serverRecommendation(right).tone];
+  });
+  for (const server of ranked) {
+    const card = document.createElement("article"), title = document.createElement("div"), name = document.createElement("a"), meta = document.createElement("small"), rec = serverRecommendation(server), badge = document.createElement("strong"), details = document.createElement("p");
+    card.className = `server-cost-card is-${rec.tone}`;
+    name.href = `#server-${server.id}`; name.textContent = server.name;
+    meta.textContent = serverSpec(server);
+    title.className = "server-cost-card-title"; title.append(name, meta);
+    badge.className = "server-cost-recommendation"; badge.textContent = rec.label;
+    const cost = server.billing?.status === "observed" ? `${locale === "zh-CN" ? "账单月" : "Bill month"} ¥${Number(server.billing.monthlyCostCNY || 0).toFixed(2)} (${server.billing.month || "-"})` : (locale === "zh-CN" ? "价格待验证" : "Price pending");
+    details.textContent = `${cost} · ${rec.reason}`;
+    card.append(title, badge, details);
+    target.append(card);
+  }
+  if (!servers.length) { const empty = document.createElement("p"); empty.className = "fleet-capacity-empty"; empty.textContent = locale === "zh-CN" ? "暂无服务器数据。" : "No server data."; target.append(empty); }
+}
 function renderServers() {
   const list = $("#server-list");
   list.replaceChildren();
@@ -1182,6 +1273,7 @@ function renderServers() {
       ? "尚无端点健康检查结果。"
       : "No endpoint health check results yet.";
   renderFleetOverview(allDeployments, allRuntime);
+  renderServerCostPanel();
   servers.forEach((server) => {
     const item = document.createElement("section");
     item.className = "server-group";

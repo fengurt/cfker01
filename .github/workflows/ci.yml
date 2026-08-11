@@ -18,6 +18,7 @@ jobs:
       - run: npm ci
       - run: npm run types
       - run: npm run content:validate
+      - run: npm run ops:validate
       - run: npm run build
       - run: npm run d1:migrate:local
       - run: npm run check

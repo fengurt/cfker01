@@ -50,6 +50,11 @@ npm run dev:worker              # Worker and API development
 | `GET /admin/heartbeat` | Bearer | Last cron heartbeat from KV |
 | `GET /admin/audit?limit=20` | Bearer | Recent audit events from D1 |
 | `POST /admin/audit` | Bearer | Append audit event |
+| `GET /api/admin/v1/incidents` | Admin session / token | Read the deduplicated incident inbox |
+| `POST /api/admin/v1/incidents` | Operator | Open or deduplicate an incident |
+| `PATCH /api/admin/v1/incidents/:id` | Operator | Acknowledge, assign, or resolve with a version lock |
+| `GET/PATCH /api/admin/v1/deployment-requirements/:projectId` | Viewer / operator | Manage explicit deployment constraints |
+| `GET /api/admin/v1/placement-recommendations/:projectId` | Viewer | Return up to three safe placement candidates |
 | `GET /.well-known/mcp` | No | MCP server card |
 | `POST /mcp` | `X-Api-Key` | JSON-RPC (tools: `get_status`, `get_history`) |
 
@@ -64,12 +69,15 @@ npm run build               # validate and generate static catalog
 npm run check               # wrangler check + tsc
 npm run deploy:staging
 npm run deploy:production
+npm run deploy:amd          # immutable Git archive to the configured AMD Docker host
 npm run tail
 npm run d1:migrate:local
 npm run d1:migrate:remote
 ```
 
 Catalog content lives in `src/content/`. See [docs/content-contributing.md](./docs/content-contributing.md) before adding or changing records.
+
+The resource-operations product contract, glossary, decisions, and release acceptance checklist live in [docs/resource-operations-spec.md](./docs/resource-operations-spec.md), [CONTEXT.md](./CONTEXT.md), and [docs/resource-operations-acceptance.md](./docs/resource-operations-acceptance.md). Run `npm run ops:validate` before changing operational behavior.
 
 ## Project inventory and admin GUI
 
