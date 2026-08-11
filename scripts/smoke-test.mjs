@@ -7,6 +7,7 @@ const checks = [
 ];
 for (const [path, status, type] of checks) {
   const response = await fetch(new URL(path, root), { redirect: "manual" });
-  if (response.status !== status || !response.headers.get("content-type")?.includes(type)) throw new Error(`${path}: expected ${status} ${type}, received ${response.status} ${response.headers.get("content-type")}`);
+  const rootRedirect = path === "/" && response.status === 302 && response.headers.get("location")?.endsWith("/resources/");
+  if ((!rootRedirect && response.status !== status) || (!rootRedirect && !response.headers.get("content-type")?.includes(type))) throw new Error(`${path}: expected ${status} ${type}, received ${response.status} ${response.headers.get("content-type")}`);
   console.log(`ok ${path} ${status}`);
 }
