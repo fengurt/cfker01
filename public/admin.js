@@ -995,6 +995,13 @@ function serverSpec(server) {
       Number(host.diskTotalBytes || 0) / 1024 / 1024 / 1024;
   return `${serverClass(server)} · ${cpu > 0 ? `${cpu} vCPU` : "CPU -"} · ${compactServerSize(memoryMb / 1024, "G")} RAM · ${compactServerSize(diskGb, "G")}`;
 }
+function serverHardwareSpec(server) {
+  const host = runtimeHost(server) || {},
+    cpu = numericCpu(server.cpu) || numericCpu(host.cpuCount),
+    memoryMb = Number(server.memory_mb || 0) || Number(host.memoryTotalKb || 0) / 1024,
+    diskGb = Number(server.disk_gb || 0) || Number(host.diskTotalBytes || 0) / 1024 / 1024 / 1024;
+  return `${cpu > 0 ? `${cpu} vCPU` : "CPU -"} · ${compactServerSize(memoryMb / 1024, "G")} RAM · ${compactServerSize(diskGb, "G")}`;
+}
 function dueState(server) {
   const dueAt = server.due_at ? new Date(server.due_at).getTime() : NaN;
   if (!Number.isFinite(dueAt)) return "";
@@ -1065,6 +1072,18 @@ function renderFleetOverview(allDeployments, allRuntime) {
     locale === "zh-CN"
       ? `${scanned}/${servers.length} 台已完成运行时采集`
       : `${scanned}/${servers.length} servers have a runtime snapshot`;
+  const observedBilling = servers.filter((server) => server.billing?.status === "observed"),
+    observedTotal = observedBilling.reduce((sum, server) => sum + Number(server.billing?.monthlyCostCNY || 0), 0),
+    billingLabel = $("#fleet-billing-summary");
+  if (billingLabel) {
+    if (billingSummary?.status === "available") {
+      const balance = Number(billingSummary.balanceCNY),
+        balanceText = Number.isFinite(balance) ? ` · ${locale === "zh-CN" ? "余额" : "balance"} ¥${balance.toFixed(2)}` : "";
+      billingLabel.textContent = `${locale === "zh-CN" ? "账单快照" : "Billing snapshot"} ${billingSummary.month || "-"} · ${observedBilling.length}/${servers.length} ${locale === "zh-CN" ? "台已关联" : "servers linked"} · ¥${observedTotal.toFixed(2)}${balanceText}`;
+    } else {
+      billingLabel.textContent = locale === "zh-CN" ? "账单未验证 · 容量建议不包含价格推断" : "Billing unverified · capacity guidance excludes price assumptions";
+    }
+  }
   for (const server of servers) {
     const tile = document.createElement("a"),
       state = fleetState(server),
@@ -1258,7 +1277,7 @@ function renderFleetServerRecord(server) {
   profile.className = "fleet-record-profile fleet-record-section";
   const profileTitle = document.createElement("h3"); profileTitle.textContent = locale === "zh-CN" ? "基本信息与性能" : "Profile & performance"; profile.append(profileTitle);
   const facts = document.createElement("div"); facts.className = "fleet-record-facts";
-  const factValues = [[locale === "zh-CN" ? "类型" : "Type", serverClass(server)], [locale === "zh-CN" ? "规格" : "Spec", serverSpec(server)], [locale === "zh-CN" ? "带宽" : "Bandwidth", serverBandwidth(server)], [locale === "zh-CN" ? "系统" : "OS", server.operating_system || "-"]];
+  const factValues = [[locale === "zh-CN" ? "类型" : "Type", serverClass(server)], [locale === "zh-CN" ? "规格" : "Spec", serverHardwareSpec(server)], [locale === "zh-CN" ? "带宽" : "Bandwidth", serverBandwidth(server)], [locale === "zh-CN" ? "系统" : "OS", server.operating_system || "-"]];
   for (const [label, value] of factValues) { const fact = document.createElement("div"), key = document.createElement("small"), val = document.createElement("strong"); key.textContent = label; val.textContent = value; fact.append(key, val); facts.append(fact); }
   profile.append(facts);
   const meters = document.createElement("div"); meters.className = "fleet-record-metrics";
@@ -1271,6 +1290,15 @@ function renderFleetServerRecord(server) {
     const empty = document.createElement("p"); empty.className = "fleet-record-empty"; empty.textContent = locale === "zh-CN" ? "尚无近期运行时采样，性能数据不可判定。" : "No recent runtime sample; performance cannot be determined."; meters.append(empty);
   }
   profile.append(meters);
+  const recommendation = serverRecommendation(server), advice = document.createElement("div"), adviceHead = document.createElement("div"), adviceBadge = document.createElement("strong"), billing = document.createElement("span"), adviceReason = document.createElement("p"), billingRecords = server.billing?.records || [], billingLastSeen = billingRecords.map((item) => item.lastSeenAt).filter(Boolean).sort().at(-1);
+  advice.className = `fleet-record-advice is-${recommendation.tone}`;
+  adviceHead.className = "fleet-record-advice-head";
+  adviceBadge.textContent = recommendation.label;
+  billing.textContent = server.billing?.status === "observed"
+    ? `${locale === "zh-CN" ? "历史账单" : "Observed bill"} ¥${Number(server.billing.monthlyCostCNY || 0).toFixed(2)} · ${server.billing.month || "-"}${billingLastSeen ? ` · ${formatDateTime(billingLastSeen)}` : ""}`
+    : (locale === "zh-CN" ? "账单未关联" : "Billing not linked");
+  adviceReason.textContent = recommendation.reason;
+  adviceHead.append(adviceBadge, billing); advice.append(adviceHead, adviceReason); profile.append(advice);
 
   operations.className = "fleet-record-operations";
   const deployBlock = document.createElement("section"), deployTitle = document.createElement("h3"); deployBlock.className = "fleet-record-section fleet-record-deployments"; deployTitle.textContent = locale === "zh-CN" ? "部署与关联仓库" : "Deployments & repositories"; deployBlock.append(deployTitle, renderRegisteredDeployments(server));
@@ -1322,37 +1350,6 @@ function serverRecommendation(server) {
     return { tone: runtimeFresh ? "healthy" : "unknown", label: recommendationLabel(locale === "zh-CN" ? "优先使用" : "Prefer for next deployment"), reason: recommendationReason(locale === "zh-CN" ? "采样容量充足且暂无登记部署。" : "Healthy capacity with no registered deployments.") };
   return { tone: runtimeFresh ? "neutral" : "unknown", label: recommendationLabel(locale === "zh-CN" ? "保持" : "Keep"), reason: recommendationReason(locale === "zh-CN" ? "当前采样没有触发扩容条件。" : "Current sample does not trigger scaling.") };
 }
-function renderServerCostPanel() {
-  const target = $("#server-cost-grid"), summary = $("#server-cost-summary");
-  if (!target || !summary) return;
-  target.replaceChildren();
-  const observed = servers.filter((server) => server.billing?.status === "observed");
-  const total = observed.reduce((sum, server) => sum + Number(server.billing?.monthlyCostCNY || 0), 0);
-  if (billingSummary?.status === "available") {
-    const balance = Number(billingSummary.balanceCNY);
-    const balanceText = Number.isFinite(balance) ? ` / ${locale === "zh-CN" ? "余额" : "balance"} ¥${balance.toFixed(2)}` : "";
-    summary.textContent = `${locale === "zh-CN" ? "腾讯云" : "Tencent Cloud"} ${billingSummary.month || ""} ${locale === "zh-CN" ? "已验证账单" : "verified billing"}${balanceText} · ${locale === "zh-CN" ? "服务器账单月已观测" : "observed server spend for bill month"} ¥${total.toFixed(2)}`;
-  } else {
-    summary.textContent = locale === "zh-CN" ? "未取得腾讯云账单；显示容量建议，不虚构价格。" : "Tencent billing is unavailable; capacity guidance is shown without invented prices.";
-  }
-  const ranked = [...servers].sort((left, right) => {
-    const rank = { danger: 0, warning: 1, healthy: 2, neutral: 3, unknown: 4 };
-    return rank[serverRecommendation(left).tone] - rank[serverRecommendation(right).tone];
-  });
-  for (const server of ranked) {
-    const card = document.createElement("article"), title = document.createElement("div"), name = document.createElement("a"), meta = document.createElement("small"), rec = serverRecommendation(server), badge = document.createElement("strong"), details = document.createElement("p");
-    card.className = `server-cost-card is-${rec.tone}`;
-    name.href = `#server-${server.id}`; name.textContent = server.name;
-    meta.textContent = serverSpec(server);
-    title.className = "server-cost-card-title"; title.append(name, meta);
-    badge.className = "server-cost-recommendation"; badge.textContent = rec.label;
-    const cost = server.billing?.status === "observed" ? `${locale === "zh-CN" ? "账单月" : "Bill month"} ¥${Number(server.billing.monthlyCostCNY || 0).toFixed(2)} (${server.billing.month || "-"})` : (locale === "zh-CN" ? "价格待验证" : "Price pending");
-    details.textContent = `${cost} · ${rec.reason}`;
-    card.append(title, badge, details);
-    target.append(card);
-  }
-  if (!servers.length) { const empty = document.createElement("p"); empty.className = "fleet-capacity-empty"; empty.textContent = locale === "zh-CN" ? "暂无服务器数据。" : "No server data."; target.append(empty); }
-}
 function renderServers() {
   const list = $("#server-list");
   list.replaceChildren();
@@ -1390,7 +1387,6 @@ function renderServers() {
       ? "尚无端点健康检查结果。"
       : "No endpoint health check results yet.";
   renderFleetOverview(allDeployments, allRuntime);
-  renderServerCostPanel();
   list.hidden = true;
   return;
   servers.forEach((server) => {
