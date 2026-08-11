@@ -4,8 +4,8 @@ import adminScript from "../public/admin.js?raw";
 
 describe("admin fleet UI release contract", () => {
   it("cache-busts the fleet assets with the same release key", () => {
-    expect(workspace).toContain("/admin-ops-v2.css?v=20260811-fleet-3");
-    expect(workspace).toContain("/admin.js?v=20260811-fleet-3");
+    expect(workspace).toContain("/admin-ops-v2.css?v=20260811-fleet-4");
+    expect(workspace).toContain("/admin.js?v=20260811-fleet-4");
   });
 
   it("uses one integrated server board without the duplicate cost grid", () => {
