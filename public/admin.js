@@ -1031,11 +1031,13 @@ function renderFleetOverview(allDeployments, allRuntime) {
   const distribution = $("#fleet-status-distribution"),
     availability = $("#fleet-availability-grid"),
     capacity = $("#fleet-capacity-list"),
-    coverage = $("#fleet-coverage-stats");
+    coverage = $("#fleet-coverage-stats"),
+    board = $("#fleet-server-board");
   distribution.replaceChildren();
   availability.replaceChildren();
   capacity.replaceChildren();
   coverage.replaceChildren();
+  board.replaceChildren();
   const groups = { healthy: [], unknown: [], attention: [] };
   for (const server of servers) groups[fleetState(server)].push(server);
   appendFleetCount(
@@ -1082,6 +1084,7 @@ function renderFleetOverview(allDeployments, allRuntime) {
     due.textContent = dueLabel(server);
     tile.append(name, details, due);
     availability.append(tile);
+    board.append(renderFleetServerRecord(server));
   }
   const capacities = servers
     .map((server) => {
@@ -1205,6 +1208,89 @@ function renderFleetOverview(allDeployments, allRuntime) {
       ? "仅计算确定性项目、仓库和 IP 匹配；未确认关联不会自动写入。"
       : "Only deterministic project, repository, and IP matches are included; uncertain links stay unlinked.";
 }
+
+function serverCloudAsset(server) {
+  return (server.runtime_assets || []).find((asset) => ["cvm", "lighthouse"].includes(String(asset.kind)));
+}
+
+function serverBandwidth(server) {
+  const metadata = serverCloudAsset(server)?.metadata || {};
+  const value = Number(metadata.bandwidthMbps ?? metadata.internetMaxBandwidthOut ?? metadata.bandwidth ?? 0);
+  return Number.isFinite(value) && value > 0 ? value + " Mbps" : locale === "zh-CN" ? "未采集" : "Not collected";
+}
+
+function loadMeaning(server, host) {
+  const raw = Number(host?.load1);
+  if (!Number.isFinite(raw)) return locale === "zh-CN" ? "Load 未采集" : "Load not collected";
+  const cpu = numericCpu(server.cpu) || numericCpu(host?.cpuCount);
+  return cpu > 0
+    ? "Load " + raw.toFixed(2) + " · " + (locale === "zh-CN" ? "1 分钟平均负载 / " : "1-minute average / ") + cpu + " vCPU"
+    : "Load " + raw.toFixed(2) + " · " + (locale === "zh-CN" ? "1 分钟平均负载" : "1-minute average");
+}
+
+function appendFleetMetric(target, label, value, detail, tone = "") {
+  const row = document.createElement("div"), heading = document.createElement("div"), name = document.createElement("span"), amount = document.createElement("strong"), meter = document.createElement("meter"), note = document.createElement("small");
+  row.className = "fleet-record-metric " + tone;
+  heading.className = "fleet-record-metric-head";
+  name.textContent = label;
+  amount.textContent = value === null ? "-" : Math.round(value * 100) + "%";
+  heading.append(name, amount);
+  meter.min = 0; meter.max = 1; meter.value = value === null ? 0 : value; meter.setAttribute("aria-label", label + " " + detail);
+  note.textContent = detail;
+  row.append(heading, meter, note);
+  target.append(row);
+}
+
+function renderFleetServerRecord(server) {
+  const record = document.createElement("article"), state = fleetState(server), coverage = server.runtime_coverage || {}, host = runtimeHost(server), header = document.createElement("header"), identity = document.createElement("div"), name = document.createElement("a"), meta = document.createElement("p"), summary = document.createElement("div"), body = document.createElement("div"), profile = document.createElement("section"), operations = document.createElement("section");
+  record.className = "fleet-server-record is-" + state;
+  record.id = "server-" + server.id;
+  name.href = "#server-" + server.id; name.textContent = server.name; name.className = "fleet-record-name";
+  meta.className = "fleet-record-meta";
+  meta.textContent = serverClass(server) + " · " + (server.region || (locale === "zh-CN" ? "地域未采集" : "Region not collected")) + " · " + (server.architecture || "-") + " · " + (server.ip_address || (locale === "zh-CN" ? "IP 未公开" : "IP private"));
+  const due = document.createElement("small"); due.className = "fleet-record-due " + dueState(server); due.textContent = dueLabel(server);
+  identity.append(name, meta, due);
+  summary.className = "fleet-record-summary";
+  const stats = [[locale === "zh-CN" ? "部署" : "Deployments", server.deployments?.length || 0], [locale === "zh-CN" ? "服务" : "Services", coverage.service_count || 0], [locale === "zh-CN" ? "容器" : "Containers", coverage.container_count || 0], ["DNS", server.dns_records?.length || 0]];
+  for (const [label, value] of stats) { const stat = document.createElement("span"), count = document.createElement("strong"), caption = document.createElement("small"); count.textContent = value; caption.textContent = label; stat.append(count, caption); summary.append(stat); }
+  header.className = "fleet-record-head"; header.append(identity, summary, statusBadge(server.effective_status || "unverified"));
+
+  profile.className = "fleet-record-profile fleet-record-section";
+  const profileTitle = document.createElement("h3"); profileTitle.textContent = locale === "zh-CN" ? "基本信息与性能" : "Profile & performance"; profile.append(profileTitle);
+  const facts = document.createElement("div"); facts.className = "fleet-record-facts";
+  const factValues = [[locale === "zh-CN" ? "类型" : "Type", serverClass(server)], [locale === "zh-CN" ? "规格" : "Spec", serverSpec(server)], [locale === "zh-CN" ? "带宽" : "Bandwidth", serverBandwidth(server)], [locale === "zh-CN" ? "系统" : "OS", server.operating_system || "-"]];
+  for (const [label, value] of factValues) { const fact = document.createElement("div"), key = document.createElement("small"), val = document.createElement("strong"); key.textContent = label; val.textContent = value; fact.append(key, val); facts.append(fact); }
+  profile.append(facts);
+  const meters = document.createElement("div"); meters.className = "fleet-record-metrics";
+  if (host) {
+    const memoryTotal = Number(host.memoryTotalKb || 0) * 1024, memoryUsed = Math.max(0, Number(host.memoryTotalKb || 0) - Number(host.memoryAvailableKb || 0)) * 1024, diskTotal = Number(host.diskTotalBytes || 0), diskUsed = Number(host.diskUsedBytes || 0), load = ratio(host.load1, numericCpu(server.cpu) || numericCpu(host.cpuCount)), memoryRatio = ratio(memoryUsed, memoryTotal), diskRatio = ratio(diskUsed, diskTotal);
+    appendFleetMetric(meters, "RAM", memoryRatio, formatBytes(memoryUsed) + " / " + formatBytes(memoryTotal), capacityTone(memoryRatio));
+    appendFleetMetric(meters, "Disk", diskRatio, formatBytes(diskUsed) + " / " + formatBytes(diskTotal), capacityTone(diskRatio));
+    appendFleetMetric(meters, "Load", load, loadMeaning(server, host), capacityTone(load));
+  } else {
+    const empty = document.createElement("p"); empty.className = "fleet-record-empty"; empty.textContent = locale === "zh-CN" ? "尚无近期运行时采样，性能数据不可判定。" : "No recent runtime sample; performance cannot be determined."; meters.append(empty);
+  }
+  profile.append(meters);
+
+  operations.className = "fleet-record-operations";
+  const deployBlock = document.createElement("section"), deployTitle = document.createElement("h3"); deployBlock.className = "fleet-record-section fleet-record-deployments"; deployTitle.textContent = locale === "zh-CN" ? "部署与关联仓库" : "Deployments & repositories"; deployBlock.append(deployTitle, renderRegisteredDeployments(server));
+  operations.append(deployBlock, renderFleetServices(server), renderServerDns(server));
+  body.className = "fleet-record-body"; body.append(profile, operations); record.append(header, body);
+  return record;
+}
+
+function renderFleetServices(server) {
+  const section = document.createElement("section"), title = document.createElement("h3"), assets = server.runtime_assets || [], services = assets.filter((item) => ["compose_project", "runtime_service"].includes(item.kind)), containers = assets.filter((item) => ["container", "runtime_container"].includes(item.kind));
+  section.className = "fleet-record-section fleet-record-services"; title.textContent = (locale === "zh-CN" ? "运行服务" : "Runtime services") + " · " + services.length; section.append(title);
+  if (!services.length) { const empty = document.createElement("p"); empty.className = "fleet-record-empty"; empty.textContent = locale === "zh-CN" ? "暂无已发现服务。" : "No runtime services discovered."; section.append(empty); return section; }
+  const list = document.createElement("div"); list.className = "fleet-service-list";
+  for (const service of services) {
+    const row = document.createElement("div"), name = service.url ? externalLink(service.name, service.url, "url-link") : plainStrong(service.name), meta = document.createElement("small"), serviceContainers = containers.filter((container) => (container.metadata?.composeProject || container.name) === service.name).map((container) => container.name);
+    row.className = "fleet-service-row"; meta.textContent = (serviceContainers.length || service.metadata?.containerCount || 0) + " containers · " + (service.metadata?.workingDir || (locale === "zh-CN" ? "工作目录未采集" : "working directory unknown")) + (service.repository?.url ? " · " + (locale === "zh-CN" ? "仓库 " : "repo ") + repositoryName(service.repository.url) : ""); row.append(name, meta); list.append(row);
+  }
+  section.append(list); return section;
+}
+
 function serverRecommendation(server) {
   const host = runtimeHost(server) || {};
   const coverage = server.runtime_coverage || {};
@@ -1297,6 +1383,8 @@ function renderServers() {
       : "No endpoint health check results yet.";
   renderFleetOverview(allDeployments, allRuntime);
   renderServerCostPanel();
+  list.hidden = true;
+  return;
   servers.forEach((server) => {
     const item = document.createElement("section");
     item.className = "server-group";

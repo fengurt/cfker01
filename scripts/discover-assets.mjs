@@ -49,7 +49,7 @@ async function discoverTencent(){
         const serverId=tencentServerId(kind,item.InstanceId),publicIps=item.PublicIpAddresses||item.PublicAddresses||[],privateIps=item.PrivateIpAddresses||item.PrivateAddresses||[];
         instances.push({service,kind,item,region,serverId});
         for(const ip of publicIps)publicIpToServer.set(String(ip),serverId);
-        assets.push(a("tencent",accountId,kind,item.InstanceId,item.InstanceName||item.InstanceId,item.InstanceState||"unknown",region,null,{publicIps,privateIps,cpu:item.CPU,memoryMb:Number.isFinite(Number(item.Memory))?Number(item.Memory)*1024:null,diskGb:item.SystemDisk?.DiskSize??null,bundleId:item.BundleId,expiredAt:item.ExpiredTime,renewFlag:item.RenewFlag},null,serverId));
+        assets.push(a("tencent",accountId,kind,item.InstanceId,item.InstanceName||item.InstanceId,item.InstanceState||"unknown",region,null,{publicIps,privateIps,cpu:item.CPU,memoryMb:Number.isFinite(Number(item.Memory))?Number(item.Memory)*1024:null,diskGb:item.SystemDisk?.DiskSize??null,bundleId:item.BundleId,instanceType:item.InstanceType||item.BundleId||item.PackageType||null,bandwidthMbps:item.InternetAccessible?.InternetMaxBandwidthOut??item.InternetMaxBandwidthOut??item.BandwidthOut??item.Bandwidth??null,expiredAt:item.ExpiredTime,renewFlag:item.RenewFlag},null,serverId));
       }
     }catch(error){errors.push(err("tencent",`${service}:${region}`,error));}
     try{

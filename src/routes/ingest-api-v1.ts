@@ -141,8 +141,8 @@ async function ingestBatch(request: Request, env: Env, runId: string, rawIndex: 
     `).bind(asset.id, asset.provider, asset.accountId, asset.kind, asset.externalId, asset.parentExternalId, asset.name, asset.status, asset.region, asset.url, asset.serverId, asset.projectId, JSON.stringify(asset.metadata), now, asset.staleAfter, asset.contentHash, runId));
     if (asset.provider === "tencent" && ["cvm", "lighthouse"].includes(asset.kind)) {
       const publicIp = Array.isArray(asset.metadata?.publicIps) ? asset.metadata.publicIps[0] ?? null : null;
-      statements.push(env.MGMT_DB.prepare(`UPDATE servers SET provider_resource_id=?1,cloud_status=?2,cloud_checked_at=?3,cpu=COALESCE(?4,cpu),memory_mb=COALESCE(?5,memory_mb),disk_gb=COALESCE(?6,disk_gb),due_at=COALESCE(?7,due_at),updated_at=?3 WHERE id=?8 OR provider_resource_id=?1 OR (?9 IS NOT NULL AND provider LIKE 'tencent%' AND ip_address=?9)`)
-        .bind(asset.externalId, asset.status, now, asset.metadata?.cpu != null ? `${asset.metadata.cpu} vCPU` : null, asset.metadata?.memoryMb ?? null, asset.metadata?.diskGb ?? null, asset.metadata?.expiredAt ?? null, asset.serverId, publicIp));
+      statements.push(env.MGMT_DB.prepare(`UPDATE servers SET provider_resource_id=?1,cloud_status=?2,cloud_checked_at=?3,region=COALESCE(?4,region),cpu=COALESCE(?5,cpu),memory_mb=COALESCE(?6,memory_mb),disk_gb=COALESCE(?7,disk_gb),due_at=COALESCE(?8,due_at),updated_at=?3 WHERE id=?9 OR provider_resource_id=?1 OR (?10 IS NOT NULL AND provider LIKE 'tencent%' AND ip_address=?10)`)
+        .bind(asset.externalId, asset.status, now, asset.region, asset.metadata?.cpu != null ? `${asset.metadata.cpu} vCPU` : null, asset.metadata?.memoryMb ?? null, asset.metadata?.diskGb ?? null, asset.metadata?.expiredAt ?? null, asset.serverId, publicIp));
     }
     if (asset.provider === "tencent" && asset.kind === "tat_agent") {
       const healthy = asset.status === "online" ? "healthy" : "offline";

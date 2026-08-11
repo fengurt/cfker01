@@ -89,20 +89,10 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
               <div><p class="fleet-eyebrow">FLEET / 运行概览</p><h2 id="fleet-overview-title">服务器运转与容量</h2></div>
               <p id="fleet-health-summary" class="fleet-panel-note"></p>
             </header>
-            <div class="fleet-overview-grid">
-              <section class="fleet-health-panel" aria-labelledby="fleet-availability-title">
-                <div class="fleet-section-heading"><h3 id="fleet-availability-title">可用性</h3><div id="fleet-status-distribution" class="fleet-status-distribution" aria-label="服务器状态分布"></div></div>
-                <div id="fleet-availability-grid" class="fleet-availability-grid" aria-label="服务器状态"></div>
-              </section>
-              <section class="fleet-capacity-panel" aria-labelledby="fleet-capacity-title">
-                <div class="fleet-section-heading"><h3 id="fleet-capacity-title">容量观察</h3><p id="fleet-capacity-summary" class="fleet-panel-note"></p></div>
-                <div id="fleet-capacity-list" class="fleet-capacity-list" aria-label="服务器容量"></div>
-              </section>
-            </div>
-            <footer class="fleet-coverage-panel" aria-labelledby="fleet-coverage-title">
-              <div class="fleet-section-heading"><h3 id="fleet-coverage-title">关联覆盖</h3><p id="fleet-coverage-summary" class="fleet-panel-note"></p></div>
-              <dl id="fleet-coverage-stats" class="fleet-coverage-stats"></dl>
-            </footer>
+            <div id="fleet-status-distribution" class="fleet-status-distribution fleet-status-strip" aria-label="服务器状态分布"></div>
+            <span hidden id="fleet-capacity-summary"></span><span hidden id="fleet-coverage-summary"></span>
+            <div hidden id="fleet-availability-grid"></div><div hidden id="fleet-capacity-list"></div><dl hidden id="fleet-coverage-stats"></dl>
+            <div id="fleet-server-board" class="fleet-server-board" aria-label="服务器综合看板"></div>
           </section>
           <section id="server-cost-panel" class="server-cost-panel" aria-labelledby="server-cost-title"><div class="fleet-panel-heading"><div><p class="fleet-eyebrow">COST / 成本与容量决策</p><h2 id="server-cost-title">账单与服务器建议</h2></div><p id="server-cost-summary" class="fleet-panel-note">读取腾讯云账单后显示实际费用；没有账单权限时不会估算价格。</p></div><div id="server-cost-grid" class="server-cost-grid" aria-live="polite"></div></section>
           <section class="infrastructure-resource-panel" aria-labelledby="infrastructure-resource-title">
@@ -115,7 +105,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
           <form class="asset-filters" id="cloud-filters"><label><span data-i18n="search">搜索</span><input name="q" type="search" placeholder="域名、Bucket、Worker" /></label><label><span data-i18n="provider">提供商</span><select name="provider"><option value="">全部</option><option value="tencent">Tencent</option><option value="cloudflare">Cloudflare</option><option value="godaddy">GoDaddy</option><option value="ens">ENS / Ethereum</option><option value="solana">Solana Name Service</option></select></label><label><span>Kind</span><select name="kind"><option value="">全部类型</option><option value="dns_domain">DNS Domain</option><option value="chain_domain">Chain Domain</option><option value="dns_record">DNS Record</option><option value="cos_bucket">COS Bucket</option><option value="cvm">CVM</option><option value="lighthouse">Lighthouse</option><option value="billing_account">Billing Account</option><option value="billing_resource">Billing Resource</option><option value="cbs_disk">CBS Disk</option><option value="tat_agent">TAT Agent</option><option value="server_runtime">Server Runtime</option><option value="runtime_service">Runtime Service</option><option value="runtime_container">Runtime Container</option><option value="edgeone_zone">EdgeOne</option><option value="worker">Worker</option><option value="pages_project">Pages</option><option value="d1_database">D1</option><option value="kv_namespace">KV</option><option value="r2_bucket">R2</option><option value="credential_status">Credential</option></select></label><label><span>可达性</span><select name="probe"><option value="">全部</option><option value="reachable">HTTPS 可达</option><option value="reachable_insecure">仅 HTTP</option><option value="client_error">客户端错误</option><option value="server_error">服务端错误</option><option value="unreachable">不可达</option><option value="dns_error">DNS 错误</option><option value="skipped_private">私网跳过</option><option value="pending">待检查</option></select></label><label><span data-i18n="region">地域</span><input name="region" /></label><label><span data-i18n="status">状态</span><input name="status" /></label><button type="submit" data-i18n="apply">筛选</button></form>
           <div class="asset-table"><div class="asset-head"><span>资源</span><span>类型</span><span>账号 / 地域</span><span>状态</span><span>最近检查</span></div><div id="cloud-assets"></div></div><div class="pagination"><button id="cloud-previous" type="button">上一页</button><span id="cloud-page-label">1 / 1</span><button id="cloud-next" type="button">下一页</button></div>
           </section>
-          <div id="server-list" class="sub-list server-inventory"></div>
+          <div id="server-list" class="sub-list server-inventory" hidden></div>
           <details class="server-create"><summary data-i18n="addServer">添加服务器</summary><div class="server-form editor-grid"><label><span data-i18n="name">名称</span><input id="server-name" /></label><label><span data-i18n="provider">提供商</span><input id="server-provider" /></label><label>IP<input id="server-ip" /></label><label><span data-i18n="architecture">架构</span><input id="server-arch" placeholder="amd64" /></label><label>CPU<input id="server-cpu" /></label><label>RAM MB<input id="server-memory" type="number" /></label><label>Disk GB<input id="server-disk" type="number" /></label><label>OS<input id="server-os" /></label><label><span data-i18n="dueDate">到期日期</span><input id="server-due" type="date" /></label><label>Public URL<input id="server-public-url" type="url" /></label><label>Health URL<input id="server-health-url" type="url" /></label></div><div class="dialog-actions"><button type="button" class="primary" id="save-server" data-i18n="saveServer">添加服务器</button></div></details>
         </section>
         <section id="repositories-view" hidden>
