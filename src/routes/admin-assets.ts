@@ -16,6 +16,8 @@ async function list(env:Env,url:URL){
   for(const [param,column] of [["provider","provider"],["account","account_id"],["kind","kind"],["status","status"],["region","region"],["server","server_id"]] as const){const value=url.searchParams.get(param)?.trim();if(value)filters.push({column,value});}
   const values:unknown[]=[],where:string[]=[];
   if(url.searchParams.get("scope")==="cloud")where.push("provider IN ('tencent','cloudflare','godaddy','ens','solana')");
+  const kinds=(url.searchParams.get("kinds")||"").split(",").map((value)=>value.trim()).filter((value)=>/^[a-z0-9_]{1,80}$/.test(value)).slice(0,20);
+  if(kinds.length){const marks=kinds.map((value)=>{values.push(value);return `?${values.length}`;});where.push(`kind IN (${marks.join(",")})`);}
   for(const filter of filters){values.push(filter.value);where.push(`${filter.column}=?${values.length}`);}
   const probe=url.searchParams.get("probe")?.trim();
   if(probe==="pending")where.push("kind IN ('dns_record','pages_project') AND status IN ('enable','active','available') AND (kind='pages_project' OR json_extract(metadata,'$.type') IN ('A','CNAME')) AND json_extract(metadata,'$.probe.status') IS NULL");

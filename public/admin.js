@@ -83,6 +83,23 @@ const translations = {
     architecture: "架构",
     dueDate: "到期日期",
     saveServer: "添加服务器",
+    resourceServers: "服务器",
+    apiServices: "API 服务",
+    domainsEndpoints: "域名与端点",
+    storageCloudAssets: "存储与云资产",
+    needsAttention: "需处理",
+    healthyServers: "健康服务器",
+    abnormalApis: "异常 API",
+    unreachableEndpoints: "不可达端点",
+    expiringSoon: "即将到期",
+    noModel: "未选择模型",
+    checked: "检查",
+    nextCheck: "下次",
+    notChecked: "尚未检查",
+    queued: "已排队",
+    attention: "需关注",
+    unconfigured: "未配置",
+    connectors: "连接器",
   },
   en: {
     skip: "Skip to admin",
@@ -168,6 +185,23 @@ const translations = {
     architecture: "Architecture",
     dueDate: "Due date",
     saveServer: "Add server",
+    resourceServers: "Servers",
+    apiServices: "API services",
+    domainsEndpoints: "Domains & endpoints",
+    storageCloudAssets: "Storage & cloud assets",
+    needsAttention: "Needs attention",
+    healthyServers: "Healthy servers",
+    abnormalApis: "API issues",
+    unreachableEndpoints: "Unreachable endpoints",
+    expiringSoon: "Expiring soon",
+    noModel: "No model",
+    checked: "Checked",
+    nextCheck: "next",
+    notChecked: "Not checked yet",
+    queued: "Queued",
+    attention: "Attention",
+    unconfigured: "Unconfigured",
+    connectors: "Connectors",
   },
 };
 Object.assign(translations["zh-CN"], {
@@ -219,6 +253,7 @@ let locale = localStorage.getItem("tableai-locale") || "zh-CN",
   projectRequestController = null,
   filterTimer = null,
   sourcePollTimer = null;
+let resourceView = "servers";
 const projectFilters = {
   type: new Set(),
   platform: new Set(),
@@ -245,13 +280,16 @@ $("#language").addEventListener("click", () => {
   applyLocale();
   if (current.length) renderRows(current);
   if (servers.length) renderServers();
+  if (resourceView === "api") loadApiProviders().catch((error) => setNotice(error.message, true));
+  if (["endpoints", "storage"].includes(resourceView)) switchResourceView(resourceView).catch((error) => setNotice(error.message, true));
 });
 async function request(path, options = {}) {
+  const { skipReauth = false, ...fetchOptions } = options;
   const response = await fetch(path, {
     credentials: "same-origin",
     cache: "no-store",
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...fetchOptions,
+    headers: { "Content-Type": "application/json", ...(fetchOptions.headers || {}) },
   });
   const body = await response
     .json()
@@ -264,27 +302,47 @@ async function request(path, options = {}) {
     error.code = body.error?.code || body.error;
     error.details = body.error?.details;
     error.requestId = body.error?.requestId;
+    if (!skipReauth && error.code === "reauthentication_required") {
+      await promptForReauthentication();
+      return request(path, { ...options, skipReauth: true });
+    }
     throw error;
   }
   return body;
 }
+function setAuthState(state) {
+  document.documentElement.dataset.authState = state;
+  $("#auth-pending").hidden = state !== "pending";
+  $("#login-panel").hidden = state !== "anonymous";
+  $("#dashboard").hidden = state !== "authenticated";
+  $("#session-actions").hidden = state !== "authenticated";
+}
 function showLogin() {
+  setAuthState("anonymous");
   $("#login-panel").hidden = false;
   $("#dashboard").hidden = true;
   $("#session-actions").hidden = true;
 }
 function showDashboard() {
+  setAuthState("authenticated");
   $("#login-panel").hidden = true;
   $("#dashboard").hidden = false;
   $("#session-actions").hidden = false;
 }
 async function boot() {
+  setAuthState("pending");
+  $("#auth-pending-message").textContent = locale === "zh-CN" ? "正在恢复可信设备会话…" : "Restoring trusted-device session…";
+  $("#auth-retry").hidden = true;
   applyLocale();
   let session;
   try {
     session = await request("/admin/session");
-  } catch {
-    return showLogin();
+  } catch (error) {
+    if (error.status === 401) return showLogin();
+    setAuthState("pending");
+    $("#auth-pending-message").textContent = locale === "zh-CN" ? "暂时无法验证会话，请重试。" : "Session verification is temporarily unavailable.";
+    $("#auth-retry").hidden = false;
+    return;
   }
   $("#admin-role").textContent = session.phone || session.role;
   showDashboard();
@@ -292,6 +350,26 @@ async function boot() {
     loadSourceStatus(),
     loadResourceMonitoring().catch((error) => setNotice(error.message, true)),
   ]);
+}
+$("#auth-retry").addEventListener("click", () => boot());
+
+let reauthenticationPromise = null;
+function promptForReauthentication() {
+  if (reauthenticationPromise) return reauthenticationPromise;
+  const dialog = $("#reauth-dialog"), form = $("#reauth-form"), error = $("#reauth-error"), input = form.elements.password, submitButton = form.querySelector("button[type=submit]");
+  error.textContent = ""; input.value = ""; submitButton.disabled = false; dialog.showModal(); input.focus();
+  reauthenticationPromise = new Promise((resolve, reject) => {
+    const cleanup = () => { form.removeEventListener("submit", submit); dialog.removeEventListener("cancel", cancelEvent); dialog.querySelectorAll("[data-reauth-cancel]").forEach((button) => button.removeEventListener("click", cancel)); reauthenticationPromise = null; };
+    const cancel = () => { cleanup(); dialog.close(); reject(new Error("reauthentication_cancelled")); };
+    const cancelEvent = (event) => { event.preventDefault(); cancel(); };
+    const submit = async (event) => {
+      event.preventDefault(); submitButton.disabled = true; error.textContent = "";
+      try { await request("/admin/reauth", { method: "POST", body: JSON.stringify({ password: input.value }), skipReauth: true }); cleanup(); dialog.close(); resolve(); }
+      catch (cause) { error.textContent = cause.message; submitButton.disabled = false; input.select(); }
+    };
+    form.addEventListener("submit", submit); dialog.addEventListener("cancel", cancelEvent); dialog.querySelectorAll("[data-reauth-cancel]").forEach((button) => button.addEventListener("click", cancel));
+  });
+  return reauthenticationPromise;
 }
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -750,8 +828,36 @@ $("#incident-inbox-list")?.addEventListener("click", async (event) => {
   try { await request(`/api/admin/v1/incidents/${encodeURIComponent(button.dataset.incidentId)}`, { method: "PATCH", body: JSON.stringify({ version: Number(button.dataset.incidentVersion), status: "acknowledged" }) }); await loadIncidentInbox(); } catch (error) { setNotice(error.message, true); button.disabled = false; }
 });
 async function loadResourceMonitoring() {
-  await Promise.all([loadServers(), loadAssetSummary(), loadCloudAssets()]);
+  await Promise.all([loadServers(), loadApiProviders()]);
 }
+
+async function switchResourceView(view) {
+  resourceView = view;
+  document.querySelectorAll("#resource-view-tabs [data-resource-view]").forEach((button) => {
+    const active = button.dataset.resourceView === view;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  document.querySelectorAll("#servers-view [data-resource-panel]").forEach((panel) => {
+    const target = panel.dataset.resourcePanel;
+    panel.hidden = target === "cloud" ? !["endpoints", "storage"].includes(view) : target !== view;
+  });
+  if (view === "servers" && !servers.length) await loadServers();
+  if (view === "api") await loadApiProviders();
+  if (["endpoints", "storage"].includes(view)) {
+    const heading = $("#cloud-resource-title");
+    heading.textContent = view === "endpoints" ? t("domainsEndpoints") : t("storageCloudAssets");
+    const allowedKinds = new Set(view === "endpoints" ? ["", "dns_domain", "chain_domain", "dns_record", "edgeone_zone", "worker", "pages_project"] : ["", "cos_bucket", "r2_bucket", "kv_namespace", "d1_database", "cbs_disk", "billing_account", "billing_resource"]);
+    const kindSelect = $("#cloud-filters select[name=kind]");
+    if (!allowedKinds.has(kindSelect.value)) kindSelect.value = "";
+    for (const option of kindSelect.options) option.hidden = !allowedKinds.has(option.value);
+    cloudPage = 1;
+    await Promise.all([loadAssetSummary(), loadCloudAssets()]);
+  }
+}
+document.querySelectorAll("#resource-view-tabs [data-resource-view]").forEach((button) => button.addEventListener("click", () => {
+  switchResourceView(button.dataset.resourceView).catch((error) => setNotice(error.message, true));
+}));
 function switchWorkspace(view) {
   const normalizedView = view === "cloud" ? "servers" : view;
   for (const name of ["tasks", "projects", "servers", "repositories"]) {
@@ -1372,14 +1478,11 @@ function renderServers() {
     activeNow = Number.isFinite(latestHealthy)
       ? latestHealthy
       : allRuntime.filter(activeRuntimeAsset).length + allDeployments.filter((item) => /healthy|reachable|active|deployed|running/i.test(String(item.effective_health_status || item.status || ""))).length;
-  $("#server-total").textContent = servers.length;
-  $("#server-deployed-projects").textContent = deployedProjectKeys.size;
-  $("#server-url-count").textContent = deploymentUrls.size;
-  $("#server-active").textContent = activeNow;
   $("#server-online").textContent = servers.filter(
     (server) => fleetState(server) === "healthy",
   ).length;
   $("#server-incidents").textContent = monitorSummary?.openEvents || 0;
+  $("#server-endpoint-down").textContent = Number(monitorSummary?.latestRun?.down_count || 0);
   const latest = monitorSummary?.latestRun;
   $("#monitor-status").textContent = latest
     ? `${locale === "zh-CN" ? "端点最近检查" : "Latest endpoint check"} ${formatDateTime(latest.completed_at || latest.started_at)} / ${latest.healthy_count || 0} healthy / ${latest.degraded_count || 0} degraded / ${latest.down_count || 0} down`
@@ -1659,6 +1762,7 @@ function expirySource(asset) {
 }
 function renderExpiringResources(items) {
   const target = $("#expiring-resource-list");
+  $("#server-expiring").textContent = items.length;
   target.replaceChildren();
   if (!items.length) {
     const empty = document.createElement("p");
@@ -1699,6 +1803,38 @@ async function loadAssetSummary() {
     assetSummary = (await request("/admin/assets/summary")).data;
   renderAssetSummaries();
 }
+
+async function loadApiProviders() {
+  const target = $("#api-provider-list"), summary = $("#api-provider-summary");
+  target.replaceChildren();
+  const loading = document.createElement("p"); loading.className = "empty"; loading.textContent = locale === "zh-CN" ? "正在检查 API 服务状态…" : "Loading API provider health…"; target.append(loading);
+  try {
+    const body = await request("/api/admin/v1/api-providers"), providers = body.data || [];
+    const problem = providers.filter((item) => ["down", "degraded", "stale"].includes(item.overallStatus)).length;
+    renderMetricStrip(summary, [[providers.filter((item) => item.overallStatus === "healthy").length, t("healthy")], [problem, t("attention")], [providers.filter((item) => item.credentialStatus === "unconfigured").length, t("unconfigured")], [providers.length, t("connectors")]]);
+    $("#server-api-issues").textContent = problem;
+    target.replaceChildren();
+    for (const provider of providers) {
+      const row = document.createElement("article"), identity = document.createElement("div"), name = document.createElement("strong"), meta = document.createElement("small"), checks = document.createElement("div"), timing = document.createElement("small"), action = document.createElement("button");
+      row.className = "api-provider-row"; row.dataset.status = provider.overallStatus;
+      name.textContent = provider.accountLabel; meta.textContent = `${provider.provider} · ${provider.credentialType}`; identity.append(name, meta);
+      checks.className = "api-provider-checks"; checks.append(statusBadge(provider.overallStatus), textCell(provider.model || t("noModel")), textCell(provider.latencyMs == null ? "—" : `${provider.latencyMs} ms`));
+      timing.textContent = provider.lastCheckedAt ? `${t("checked")} ${formatDateTime(provider.lastCheckedAt)} · ${t("nextCheck")} ${formatDateTime(provider.nextDueAt)}` : t("notChecked");
+      action.type = "button"; action.dataset.providerProbe = provider.id; action.textContent = locale === "zh-CN" ? "立即检查" : "Check now";
+      row.append(identity, checks, timing, action); target.append(row);
+    }
+  } catch (error) {
+    target.replaceChildren(); const failed = document.createElement("p"); failed.className = "empty error"; failed.textContent = error.message; target.append(failed);
+  }
+}
+$("#api-provider-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-provider-probe]"); if (!button) return;
+  button.disabled = true;
+  try {
+    await request(`/api/admin/v1/api-providers/${encodeURIComponent(button.dataset.providerProbe)}/probe`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ mode: "standard" }) });
+    button.textContent = t("queued");
+  } catch (error) { setNotice(error.message, true); button.disabled = false; }
+});
 function renderAssetSummaries() {
   if (!assetSummary) return;
   const groups = assetSummary.groups || [],
@@ -1747,6 +1883,7 @@ function renderMetricStrip(target, values) {
 async function loadCloudAssets() {
   const query = assetQuery($("#cloud-filters"), cloudPage);
   query.set("scope", "cloud");
+  if (!query.has("kind")) query.set("kinds", resourceView === "endpoints" ? "dns_domain,dns_record,chain_domain,pages_project,worker,edgeone_zone" : "cos_bucket,r2_bucket,kv_namespace,d1_database,cbs_disk,billing_account,billing_resource");
   const body = await request(`/admin/assets?${query}`);
   cloudPages = Math.max(body.meta.pages, 1);
   renderAssets($("#cloud-assets"), body.data, false);

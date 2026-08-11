@@ -54,6 +54,10 @@ Each requirement must have automated evidence before production promotion. The c
 - [ ] Failed promotion restores the previous image without data rollback.
 - [ ] Home p95 load is below 2 seconds and critical interaction latency below 300ms.
 - [ ] Production smoke tests are read-only; mutation tests use staging or a marked test organization.
+- [ ] Trusted-device restoration never paints the login form before `/admin/session` returns 401.
+- [ ] Sensitive key and paid-probe mutations require password verification from the last 15 minutes.
+- [ ] API provider snapshots expose only status, latency, model, quota summary and timestamps; no key or response body reaches D1, logs, UI or MCP.
+- [ ] Server, API, endpoint and storage views load independently and each asset has one canonical display location.
 
 ## Success report
 

@@ -34,7 +34,7 @@ Status: accepted. This is the normative product and operating contract for the 9
 
 ## Frozen scope
 
-During the two-week freeze, only production defects, security, recovery, truth/freshness, Incident handling, critical journey tests and release-gate work are allowed. New SaaS connectors, generic Task features, automatic Benchmark discovery and external write actions are deferred.
+During the two-week freeze, only production defects, security, recovery, truth/freshness, Incident handling, critical journey tests and release-gate work are allowed. API credential health has one narrow truth/freshness exception: read-only monitoring for Volcengine Ark, MiniMax, OpenAI, Perplexity, Moonshot and Gemini may ship, but no generic SaaS connector marketplace or provider mutation is allowed. Other new SaaS connectors, generic Task features, automatic Benchmark discovery and external write actions are deferred.
 
 ## Severity contract
 

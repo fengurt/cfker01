@@ -1,6 +1,6 @@
 import { hashKey } from "./apikey";
 
-export type ScannerScope = "jobs:poll" | "jobs:claim" | "ingest:write";
+export type ScannerScope = "jobs:poll" | "jobs:claim" | "ingest:write" | "api-probes:write";
 
 export interface ScannerPrincipal {
   id: string;
