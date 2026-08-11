@@ -12,7 +12,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
     <link rel="stylesheet" href="/admin.css?v=20260712-2" />
     <link rel="stylesheet" href="/admin-visibility.css?v=20260712-2" />
     <link rel="stylesheet" href="/admin-compact.css?v=20260713-2" />
-    <link rel="stylesheet" href="/admin-ops-v2.css?v=20260811-capacity-1" />
+    <link rel="stylesheet" href="/admin-ops-v2.css?v=20260811-fleet-2" />
     <link rel="stylesheet" href="/admin-scanner.css?v=20260715-1" />
     <link rel="stylesheet" href="/admin-tasks.css?v=20260803-2" />
     <link rel="stylesheet" href="/admin-interactions.css?v=20260802-5" />
@@ -85,19 +85,24 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
           <div id="monitor-status" class="monitor-status" role="status"></div>
           <details id="resource-snapshot-disclosure" class="resource-snapshot-disclosure"><summary><span>资源快照与部署建议</span><small>Agent JSON</small></summary><section class="resource-snapshot-panel" aria-labelledby="resource-snapshot-title"><div><p class="fleet-eyebrow">RESOURCE SNAPSHOT / Agent 输入</p><h2 id="resource-snapshot-title">资源快照与部署建议</h2><p id="resource-snapshot-status">展开后读取最新快照。</p></div><div class="resource-snapshot-actions"><a id="resource-snapshot-api" href="/api/admin/v1/resource-snapshots/current" target="_blank" rel="noopener noreferrer">API JSON</a><button id="generate-resource-snapshot" type="button">立即生成</button><button id="copy-resource-snapshot" type="button">复制 JSON</button></div><pre id="resource-snapshot-preview" aria-live="polite"></pre></section></details>
           <section class="fleet-overview" aria-labelledby="fleet-overview-title">
-            <div class="fleet-health-panel">
-              <div class="fleet-panel-heading"><div><p class="fleet-eyebrow">FLEET / 运行概览</p><h2 id="fleet-overview-title">服务器可用性</h2></div><p id="fleet-health-summary" class="fleet-panel-note"></p></div>
-              <div id="fleet-status-distribution" class="fleet-status-distribution" aria-label="服务器状态分布"></div>
-              <div id="fleet-availability-grid" class="fleet-availability-grid" aria-label="服务器状态"></div>
+            <header class="fleet-overview-heading">
+              <div><p class="fleet-eyebrow">FLEET / 运行概览</p><h2 id="fleet-overview-title">服务器运转与容量</h2></div>
+              <p id="fleet-health-summary" class="fleet-panel-note"></p>
+            </header>
+            <div class="fleet-overview-grid">
+              <section class="fleet-health-panel" aria-labelledby="fleet-availability-title">
+                <div class="fleet-section-heading"><h3 id="fleet-availability-title">可用性</h3><div id="fleet-status-distribution" class="fleet-status-distribution" aria-label="服务器状态分布"></div></div>
+                <div id="fleet-availability-grid" class="fleet-availability-grid" aria-label="服务器状态"></div>
+              </section>
+              <section class="fleet-capacity-panel" aria-labelledby="fleet-capacity-title">
+                <div class="fleet-section-heading"><h3 id="fleet-capacity-title">容量观察</h3><p id="fleet-capacity-summary" class="fleet-panel-note"></p></div>
+                <div id="fleet-capacity-list" class="fleet-capacity-list" aria-label="服务器容量"></div>
+              </section>
             </div>
-            <div class="fleet-capacity-panel">
-              <div class="fleet-panel-heading"><div><p class="fleet-eyebrow">CAPACITY / 容量</p><h2>容量观察</h2></div><p id="fleet-capacity-summary" class="fleet-panel-note"></p></div>
-              <div id="fleet-capacity-list" class="fleet-capacity-list" aria-label="服务器容量"></div>
-            </div>
-            <div class="fleet-coverage-panel">
-              <div class="fleet-panel-heading"><div><p class="fleet-eyebrow">COVERAGE / 覆盖</p><h2>项目与服务关联</h2></div><p id="fleet-coverage-summary" class="fleet-panel-note"></p></div>
+            <footer class="fleet-coverage-panel" aria-labelledby="fleet-coverage-title">
+              <div class="fleet-section-heading"><h3 id="fleet-coverage-title">关联覆盖</h3><p id="fleet-coverage-summary" class="fleet-panel-note"></p></div>
               <dl id="fleet-coverage-stats" class="fleet-coverage-stats"></dl>
-            </div>
+            </footer>
           </section>
           <section id="server-cost-panel" class="server-cost-panel" aria-labelledby="server-cost-title"><div class="fleet-panel-heading"><div><p class="fleet-eyebrow">COST / 成本与容量决策</p><h2 id="server-cost-title">账单与服务器建议</h2></div><p id="server-cost-summary" class="fleet-panel-note">读取腾讯云账单后显示实际费用；没有账单权限时不会估算价格。</p></div><div id="server-cost-grid" class="server-cost-grid" aria-live="polite"></div></section>
           <section class="infrastructure-resource-panel" aria-labelledby="infrastructure-resource-title">
