@@ -10,8 +10,8 @@
   "onePassword": {
     "vault": "Personal",
     "item": "Tencent-APUCH-oss",
-    "secretIdRef": "op://Personal/Tencent-APUCH-oss/add more/tencent-SecretId-01",
-    "secretKeyRef": "op://Personal/Tencent-APUCH-oss/add more/tencent-SecretKey-01"
+    "secretIdRef": "op://Personal/APUCH Tencent CLI Resource/tencent_secret_id",
+    "secretKeyRef": "op://Personal/APUCH Tencent CLI Resource/tencent_secret_key"
   },
   "services": {
     "cos": {

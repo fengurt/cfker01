@@ -4,8 +4,8 @@ set -euo pipefail
 TARGET="${1:-.env.tencent.local}"
 [[ "$TARGET" == ".env.tencent.local" || "$TARGET" == ".env.local" ]] || { echo "target must be .env.tencent.local or .env.local" >&2; exit 2; }
 command -v op >/dev/null || { echo "1Password CLI (op) is required" >&2; exit 2; }
-: "${OP_TENCENT_SECRET_ID_REF:=op://Personal/Tencent-APUCH-oss/add more/tencent-SecretId-01}"
-: "${OP_TENCENT_SECRET_KEY_REF:=op://Personal/Tencent-APUCH-oss/add more/tencent-SecretKey-01}"
+: "${OP_TENCENT_SECRET_ID_REF:=op://Personal/APUCH Tencent CLI Resource/tencent_secret_id}"
+: "${OP_TENCENT_SECRET_KEY_REF:=op://Personal/APUCH Tencent CLI Resource/tencent_secret_key}"
 : "${TENCENT_REGION:=ap-guangzhou}"
 [[ "$OP_TENCENT_SECRET_ID_REF" == op://* && "$OP_TENCENT_SECRET_KEY_REF" == op://* ]] || { echo "exact Tencent 1Password references are required" >&2; exit 2; }
 secret_id="$(op read "$OP_TENCENT_SECRET_ID_REF")"
