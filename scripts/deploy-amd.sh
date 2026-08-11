@@ -23,7 +23,7 @@ echo "Deploying ${COMMIT} to ${SSH_TARGET}:${REMOTE_APP_DIR}"
 ssh -o BatchMode=yes "$SSH_TARGET" "test -f '$REMOTE_APP_DIR/.env.docker' && mkdir -p '$REMOTE_APP_DIR/backups'"
 ssh -o BatchMode=yes "$SSH_TARGET" "cd '$REMOTE_APP_DIR' && tar --exclude=backups --exclude=.env.docker --exclude=node_modules --exclude=.wrangler --exclude=dist --exclude=.cache -czf 'backups/pre-deploy-${STAMP}.tar.gz' ."
 git -C "$ROOT" archive "$COMMIT" | ssh -o BatchMode=yes "$SSH_TARGET" "tar -x -C '$REMOTE_APP_DIR'"
-ssh -o BatchMode=yes "$SSH_TARGET" "cd '$REMOTE_APP_DIR' && docker compose --env-file .env.docker config --quiet && docker compose --env-file .env.docker build --pull && docker compose --env-file .env.docker up -d --remove-orphans"
+ssh -o BatchMode=yes "$SSH_TARGET" "cd '$REMOTE_APP_DIR' && DEPLOY_VERSION='$COMMIT' docker compose --env-file .env.docker config --quiet && DEPLOY_VERSION='$COMMIT' docker compose --env-file .env.docker build --pull && DEPLOY_VERSION='$COMMIT' docker compose --env-file .env.docker up -d --remove-orphans"
 
 for attempt in {1..30}; do
   if ssh -o BatchMode=yes "$SSH_TARGET" "cd '$REMOTE_APP_DIR' && docker compose --env-file .env.docker ps --format '{{.Name}} {{.State}} {{.Health}}' | grep -q 'tableai-catalog-catalog-1.*running.*healthy'"; then
@@ -33,4 +33,9 @@ for attempt in {1..30}; do
   sleep 5
 done
 node "$ROOT/scripts/smoke-test.mjs" "$BASE_URL"
+REMOTE_VERSION="$(ssh -o BatchMode=yes "$SSH_TARGET" "docker inspect tableai-catalog-catalog-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^DEPLOY_VERSION=//p' | head -1")"
+if [[ "$REMOTE_VERSION" != "$COMMIT" ]]; then
+  echo "Deployment version mismatch: expected ${COMMIT}, got ${REMOTE_VERSION:-unknown}." >&2
+  exit 1
+fi
 echo "AMD deployment complete: ${COMMIT}"

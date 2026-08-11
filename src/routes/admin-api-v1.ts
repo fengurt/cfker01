@@ -27,6 +27,14 @@ export async function handleAdminApiV1(request: Request, env: Env, ctx: Executio
   try {
     if (resource === "openapi.json" && request.method === "GET") return openApi(request);
     if (resource === "overview" && request.method === "GET") return overview(request, env);
+    if (resource === "repository-audit") {
+      if (id === "runs" && request.method === "GET") return repositoryAuditRuns(request, env);
+      if (id === "repositories" && request.method === "GET") return repositoryAuditRepositories(request, env, url);
+      if (id === "repositories" && action && request.method === "GET") return repositoryAuditRepository(request, env, action);
+    }
+    if (resource === "deployment-evidence" && request.method === "GET") return deploymentEvidence(request, env);
+    if (resource === "server-status" && request.method === "GET") return serverStatus(request, env);
+    if (resource === "audit" && id === "export.ndjson" && request.method === "GET") return exportRepositoryAudit(env);
     if (resource === "resource-snapshots") {
       if (id === "current" && request.method === "GET") return currentResourceSnapshot(request, env);
       if (!id && request.method === "POST") return generateResourceSnapshot(request, env, ctx);
@@ -95,6 +103,61 @@ async function overview(request: Request, env: Env): Promise<Response> {
     env.MGMT_DB.prepare(`SELECT id,connector_id,status,error_code,error_message,updated_at FROM scan_jobs WHERE error_code IS NOT NULL ORDER BY updated_at DESC LIMIT 10`).all(),
   ]);
   return v1Data(request, { connectors: connectors.results ?? [], assets: assets.results ?? [], jobs: jobs.results ?? [], recentErrors: errors.results ?? [] }, { generatedAt: new Date().toISOString() });
+}
+
+async function repositoryAuditRuns(request: Request, env: Env): Promise<Response> {
+  const rows = await env.MGMT_DB.prepare(`SELECT * FROM repository_scan_runs ORDER BY started_at DESC LIMIT 100`).all<Record<string, unknown>>();
+  return v1Data(request, rows.results ?? [], { count: rows.results?.length ?? 0 });
+}
+
+async function repositoryAuditRepositories(request: Request, env: Env, url: URL): Promise<Response> {
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 50)));
+  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0));
+  if (!Number.isInteger(limit) || !Number.isInteger(offset)) return v1Error(request, "invalid_query", "limit and offset must be integers.", 400);
+  const values: unknown[] = [], where: string[] = [];
+  for (const [key, column] of [["sync_status", "sync_status"], ["deployment_status", "deployment_status"]] as const) {
+    const value = cleanText(url.searchParams.get(key), 80); if (value) { values.push(value); where.push(`${column}=?${values.length}`); }
+  }
+  const q = cleanText(url.searchParams.get("q"), 200); if (q) { values.push(`%${q}%`); where.push(`canonical_key LIKE ?${values.length}`); }
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const rows = await env.MGMT_DB.prepare(`SELECT id,project_id,canonical_key,github_owner,github_repo,repository_url,local_paths,head_sha,branch,dirty,ahead,behind,default_branch,pushed_at,visibility,archived,fork,ci_status,release_name,topics,sync_status,hygiene,deployment_status,deployment_evidence,last_scanned_at,updated_at FROM repository_snapshots ${clause} ORDER BY updated_at DESC,canonical_key LIMIT ?${values.length + 1} OFFSET ?${values.length + 2}`).bind(...values, limit, offset).all<Record<string, unknown>>();
+  const total = await env.MGMT_DB.prepare(`SELECT COUNT(*) count FROM repository_snapshots ${clause}`).bind(...values).first<{ count: number }>();
+  return v1Data(request, (rows.results ?? []).map(serializeRepositorySnapshot), { limit, offset, total: Number(total?.count ?? 0), hasMore: offset + (rows.results?.length ?? 0) < Number(total?.count ?? 0) });
+}
+
+async function repositoryAuditRepository(request: Request, env: Env, id: string): Promise<Response> {
+  const snapshot = await env.MGMT_DB.prepare(`SELECT * FROM repository_snapshots WHERE id=?1 OR canonical_key=?1`).bind(id).first<Record<string, unknown>>();
+  if (!snapshot) return v1Error(request, "not_found", "Repository audit record not found.", 404);
+  const [reviews, candidates] = await Promise.all([
+    env.MGMT_DB.prepare(`SELECT * FROM repository_reviews WHERE snapshot_id=?1 ORDER BY reviewed_at DESC LIMIT 20`).bind(snapshot.id).all(),
+    env.MGMT_DB.prepare(`SELECT * FROM repository_review_candidates WHERE snapshot_id=?1 AND status='pending' ORDER BY created_at DESC`).bind(snapshot.id).all(),
+  ]);
+  return v1Data(request, { snapshot: serializeRepositorySnapshot(snapshot), reviews: reviews.results ?? [], candidates: candidates.results ?? [] });
+}
+
+async function deploymentEvidence(request: Request, env: Env): Promise<Response> {
+  const rows = await env.MGMT_DB.prepare(`SELECT r.id,r.canonical_key,r.repository_url,r.head_sha,r.sync_status,r.deployment_status,r.deployment_evidence,r.last_scanned_at,r.project_id,p.name project_name,d.id deployment_id,d.environment,d.deployed_url,d.version,d.status deployment_runtime_status,d.deployed_at,d.last_checked_at,d.last_latency_ms,d.last_error,s.name server_name,s.status server_status,s.health_status server_health_status FROM repository_snapshots r LEFT JOIN catalog_projects p ON p.id=r.project_id LEFT JOIN deployments d ON d.project_id=r.project_id LEFT JOIN servers s ON s.id=d.server_id ORDER BY r.updated_at DESC`).all<Record<string, unknown>>();
+  return v1Data(request, (rows.results ?? []).map((row) => ({ ...row, deploymentEvidence: parseJson(row.deployment_evidence, []) })));
+}
+
+async function serverStatus(request: Request, env: Env): Promise<Response> {
+  const rows = await env.MGMT_DB.prepare(`SELECT s.*, (SELECT COUNT(*) FROM deployments d WHERE d.server_id=s.id) deployment_count, (SELECT COUNT(*) FROM discovered_assets a WHERE a.server_id=s.id AND a.kind IN ('runtime_container','container') AND a.status!='stale') container_count, (SELECT COUNT(*) FROM discovered_assets a WHERE a.server_id=s.id AND a.kind IN ('runtime_service','compose_project') AND a.status!='stale') service_count, (SELECT MAX(last_seen_at) FROM discovered_assets a WHERE a.server_id=s.id AND a.kind='server_runtime') runtime_seen_at FROM servers s ORDER BY deployment_count ASC,s.name`).all<Record<string, unknown>>();
+  const now = Date.now();
+  return v1Data(request, (rows.results ?? []).map((row) => {
+    const runtimeSeen = row.runtime_seen_at ? Date.parse(String(row.runtime_seen_at)) : NaN;
+    const runtimeFresh = Number.isFinite(runtimeSeen) && now - runtimeSeen <= 15 * 60 * 1000;
+    return { ...row, runtimeFresh, availability: row.health_status === "healthy" && runtimeFresh ? "healthy" : row.health_status === "down" ? "down" : runtimeFresh ? "degraded" : "stale" };
+  }), { generatedAt: new Date().toISOString(), freshnessMinutes: 15 });
+}
+
+function exportRepositoryAudit(env: Env): Response {
+  const encoder = new TextEncoder(); let offset = 0;
+  const stream = new ReadableStream<Uint8Array>({ async pull(controller) {
+    const rows = await env.MGMT_DB.prepare(`SELECT * FROM repository_snapshots ORDER BY canonical_key LIMIT 200 OFFSET ?1`).bind(offset).all<Record<string, unknown>>();
+    const values = rows.results ?? []; if (!values.length) { controller.close(); return; }
+    controller.enqueue(encoder.encode(values.map((row) => JSON.stringify(serializeRepositorySnapshot(row))).join("\n") + "\n")); offset += values.length;
+  }});
+  return new Response(stream, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Content-Disposition": "attachment; filename=repository-audit.ndjson", "Cache-Control": "no-store" } });
 }
 
 async function currentResourceSnapshot(request: Request, env: Env): Promise<Response> {
@@ -459,7 +522,7 @@ function openApi(request: Request): Response {
   const paths: Record<string, unknown> = {};
   for (const [path, methods] of Object.entries({
     "/overview": ["get"], "/resource-snapshots/current": ["get"], "/resource-snapshots": ["post"], "/deployment-requirements/{projectId}": ["get", "patch"], "/placement-recommendations/{projectId}": ["get"], "/sources": ["get"], "/sources/{id}": ["patch"], "/resources": ["get"], "/resources/{id}": ["get", "patch"],
-    "/export/assets.ndjson": ["get"], "/scans": ["post"], "/scans/{id}": ["get"], "/scans/{id}/cancel": ["post"], "/scans/{id}/retry": ["post"],
+    "/export/assets.ndjson": ["get"], "/audit/export.ndjson": ["get"], "/repository-audit/runs": ["get"], "/repository-audit/repositories": ["get"], "/repository-audit/repositories/{id}": ["get"], "/deployment-evidence": ["get"], "/server-status": ["get"], "/scans": ["post"], "/scans/{id}": ["get"], "/scans/{id}/cancel": ["post"], "/scans/{id}/retry": ["post"],
     "/resource-links": ["get"], "/resource-links/{id}": ["patch"], "/incidents": ["get", "post"], "/incidents/{id}": ["get", "patch"], "/service-keys": ["get", "post"], "/service-keys/{id}": ["delete"], "/service-keys/{id}/rotate": ["post"],
     "/tasks": ["get", "post"], "/tasks/{id}": ["get", "patch"], "/tasks/{id}/transition": ["post"], "/tasks/{id}/comments": ["post"], "/tasks/{id}/dependencies": ["post"], "/tasks/gantt": ["get"],
     "/task-people": ["get", "post"], "/task-people/{id}": ["patch"], "/task-milestones": ["get", "post"], "/task-milestones/{id}": ["patch"], "/task-views": ["get", "post"], "/task-views/{id}": ["delete"],
@@ -469,6 +532,9 @@ function openApi(request: Request): Response {
 
 function serializeAsset(row: Record<string, unknown>): Record<string, unknown> {
   return { ...row, metadata: parseJson(row.metadata, {}), tags: parseJson(row.tags, []), ignored: Boolean(row.ignored), pinned: Boolean(row.pinned) };
+}
+function serializeRepositorySnapshot(row: Record<string, unknown>): Record<string, unknown> {
+  return { ...row, local_paths: parseJson(row.local_paths, []), topics: parseJson(row.topics, []), github_metadata: parseJson(row.github_metadata, {}), scan_evidence: parseJson(row.scan_evidence, []), hygiene: parseJson(row.hygiene, {}), deployment_evidence: parseJson(row.deployment_evidence, []), dirty: Boolean(row.dirty), archived: Boolean(row.archived), fork: Boolean(row.fork) };
 }
 function parseConnector(row: Record<string, unknown>): Record<string, unknown> { return { ...row, enabled: Boolean(row.enabled), config: parseJson(row.config, {}) }; }
 function serializeServiceKey(row: Record<string, unknown>): Record<string, unknown> { return { ...row, scopes: parseJson(row.scopes, []), connector_ids: parseJson(row.connector_ids, []), allowed_providers: parseJson(row.allowed_providers, []), allowed_accounts: parseJson(row.allowed_accounts, []) }; }

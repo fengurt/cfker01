@@ -120,7 +120,7 @@ export async function handleRequest(
   }
 
   if (pathname === "/health") {
-    return handleHealth();
+    return handleHealth(env);
   }
 
   if (pathname === "/status") {

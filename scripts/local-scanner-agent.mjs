@@ -29,7 +29,10 @@ for (const queued of jobs) {
     if (previous.trim() === fingerprint && queued.mode !== "full") await completeCacheHit(queued.id, fingerprint);
     else {
       await exec(process.execPath, [`${root}/scripts/repository-audit.mjs`], { cwd: root, timeout: 45 * 60_000, maxBuffer: 20_000_000, env: { ...process.env, REPOSITORY_SCAN_ROOT: process.env.LOCAL_SCAN_ROOT || "/Users/af/cpro01", REPOSITORY_AUDIT_CACHE: resolve(cache, "repository-audit") } });
-      await exec(process.execPath, [`${root}/scripts/discover-assets.mjs`, "--upload"], { cwd: root, timeout: 45 * 60_000, maxBuffer: 20_000_000, env: { ...process.env, WORKER_URL: base, SCANNER_KEY: key, SCAN_JOB_ID: queued.id, SCANNER_CONNECTOR_PROVIDER: "local", ASSET_DISCOVERY_PROVIDERS: "local", LOCAL_INVENTORY_PATH: inventory, REPOSITORY_AUDIT_PATH: audit, ASSET_DISCOVERY_OUTPUT: output } });
+      const discovery = await exec(process.execPath, [`${root}/scripts/discover-assets.mjs`, "--upload"], { cwd: root, timeout: 45 * 60_000, maxBuffer: 20_000_000, env: { ...process.env, WORKER_URL: base, SCANNER_KEY: key, SCAN_JOB_ID: queued.id, SCANNER_CONNECTOR_PROVIDER: "local", ASSET_DISCOVERY_PROVIDERS: "local", LOCAL_INVENTORY_PATH: inventory, REPOSITORY_AUDIT_PATH: audit, ASSET_DISCOVERY_OUTPUT: output } });
+      const summary = [...String(discovery.stdout || "").trim().split("\n")].reverse().map((line) => { try { return JSON.parse(line); } catch { return null; } }).find(Boolean);
+      if (summary?.uploadStatus === "partial") await writeFile(resolve(cache, "last-partial"), `${new Date().toISOString()}\n`, { mode: 0o600 });
+      else if (summary?.uploadStatus !== "completed") throw new Error("scanner_upload_status_missing");
       await writeFile(resolve(cache, "last-fingerprint"), `${fingerprint}\n`, { mode: 0o600 });
     }
     await writeFile(resolve(cache, "last-success"), `${new Date().toISOString()}\n`, { mode: 0o600 });

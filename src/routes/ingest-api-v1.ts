@@ -121,6 +121,7 @@ async function ingestBatch(request: Request, env: Env, runId: string, rawIndex: 
     if (!asset) return ingestError(request, "invalid_asset", "One or more assets are malformed or outside the connector scope.", 400);
     validated.push(asset);
   }
+  await resolveAssetRelationships(env, validated);
   let newCount = 0, changedCount = 0, unchangedCount = 0;
   const now = new Date().toISOString();
   const statements: D1PreparedStatement[] = [];
@@ -240,7 +241,81 @@ function sanitizeMetadata(value: unknown): Record<string, unknown> { if (!value 
 function validUrl(value: unknown): string | null { if (!value) return null; try { const url = new URL(String(value)); return ["http:", "https:", "ssh:", "git:"].includes(url.protocol) ? url.toString().slice(0, 2000) : null; } catch { return null; } }
 function stableId(...parts: string[]): string { let hash = 2166136261; for (const char of parts.join("\0")) { hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619); } return `asset-${(hash >>> 0).toString(16).padStart(8, "0")}`; }
 async function sha256(value: string): Promise<string> { const data = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return Array.from(new Uint8Array(data), (byte) => byte.toString(16).padStart(2, "0")).join(""); }
-async function ingestLinks(env: Env, links: unknown[], now: string): Promise<void> { for (const input of links.slice(0, 2000)) { if (!input || typeof input !== "object") continue; const link = input as Record<string, any>; const source = clean(link.sourceAssetId, 200), relationship = clean(link.relationship, 100); if (!source || !relationship) continue; const target = clean(link.targetAssetId, 200), project = clean(link.projectId, 200), id = stableId("link", source, target ?? project ?? "", relationship); await env.MGMT_DB.prepare(`INSERT INTO resource_links(id,source_asset_id,target_asset_id,project_id,relationship,confidence,status,evidence,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9) ON CONFLICT(source_asset_id,target_asset_id,project_id,relationship) DO UPDATE SET confidence=excluded.confidence,status=excluded.status,evidence=excluded.evidence,updated_at=excluded.updated_at`).bind(id, source, target, project, relationship, Math.max(0, Math.min(1, Number(link.confidence ?? 0))), ["candidate", "confirmed", "rejected"].includes(link.status) ? link.status : "candidate", JSON.stringify(Array.isArray(link.evidence) ? link.evidence.slice(0, 20) : []), now).run(); } }
+async function ingestLinks(env: Env, links: unknown[], now: string): Promise<void> {
+  const values = links.slice(0, 2000).filter((input): input is Record<string, any> => Boolean(input && typeof input === "object"));
+  const sourceIds = await existingIds(env, "discovered_assets", values.map((input) => clean(input.sourceAssetId, 200)).filter(Boolean) as string[]);
+  const targetIds = await existingIds(env, "discovered_assets", values.map((input) => clean(input.targetAssetId, 200)).filter(Boolean) as string[]);
+  const projectIds = await existingIds(env, "catalog_projects", values.map((input) => clean(input.projectId, 200)).filter(Boolean) as string[]);
+  for (const link of values) {
+    const source = clean(link.sourceAssetId, 200), relationship = clean(link.relationship, 100);
+    if (!source || !relationship || !sourceIds.has(source)) continue;
+    const requestedTarget = clean(link.targetAssetId, 200), requestedProject = clean(link.projectId, 200);
+    const target = requestedTarget && targetIds.has(requestedTarget) ? requestedTarget : null;
+    const project = requestedProject && projectIds.has(requestedProject) ? requestedProject : null;
+    if (!target && !project) continue;
+    const id = stableId("link", source, target ?? project ?? "", relationship);
+    await env.MGMT_DB.prepare(`INSERT INTO resource_links(id,source_asset_id,target_asset_id,project_id,relationship,confidence,status,evidence,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9) ON CONFLICT(source_asset_id,target_asset_id,project_id,relationship) DO UPDATE SET confidence=excluded.confidence,status=excluded.status,evidence=excluded.evidence,updated_at=excluded.updated_at`).bind(id, source, target, project, relationship, Math.max(0, Math.min(1, Number(link.confidence ?? 0))), ["candidate", "confirmed", "rejected"].includes(link.status) ? link.status : "candidate", JSON.stringify(Array.isArray(link.evidence) ? link.evidence.slice(0, 20) : []), now).run();
+  }
+}
+
+async function existingIds(env: Env, table: "discovered_assets" | "catalog_projects", values: string[]): Promise<Set<string>> {
+  const result = new Set<string>();
+  for (const chunk of chunks([...new Set(values)], 50)) {
+    if (!chunk.length) continue;
+    const placeholders = chunk.map((_, index) => `?${index + 1}`).join(",");
+    const rows = await env.MGMT_DB.prepare(`SELECT id FROM ${table} WHERE id IN (${placeholders})`).bind(...chunk).all<{ id: string }>();
+    for (const row of rows.results ?? []) result.add(String(row.id));
+  }
+  return result;
+}
+
+async function resolveAssetRelationships(env: Env, assets: Record<string, any>[]): Promise<void> {
+  const serverRefs = [...new Set(assets.map((asset) => asset.serverId).filter(Boolean).map(String))];
+  const projectRefs = [...new Set(assets.map((asset) => asset.projectId).filter(Boolean).map(String))];
+  const serverByRef = new Map<string, string>();
+  const projectIds = new Set<string>();
+  for (const chunk of chunks(serverRefs, 50)) {
+    if (!chunk.length) continue;
+    const placeholders = chunk.map((_, index) => `?${index + 1}`).join(",");
+    const providerPlaceholders = chunk.map((_, index) => `?${index + chunk.length + 1}`).join(",");
+    const rows = await env.MGMT_DB.prepare(`SELECT id,provider_resource_id FROM servers WHERE id IN (${placeholders}) OR provider_resource_id IN (${providerPlaceholders})`).bind(...chunk, ...chunk).all<{ id: string; provider_resource_id: string | null }>();
+    for (const row of rows.results ?? []) {
+      serverByRef.set(String(row.id), String(row.id));
+      if (row.provider_resource_id) serverByRef.set(String(row.provider_resource_id), String(row.id));
+    }
+  }
+  for (const chunk of chunks(projectRefs, 50)) {
+    if (!chunk.length) continue;
+    const placeholders = chunk.map((_, index) => `?${index + 1}`).join(",");
+    const rows = await env.MGMT_DB.prepare(`SELECT id FROM catalog_projects WHERE id IN (${placeholders})`).bind(...chunk).all<{ id: string }>();
+    for (const row of rows.results ?? []) projectIds.add(String(row.id));
+  }
+  for (const asset of assets) {
+    const candidates = Array.isArray(asset.metadata?.relationshipCandidates) ? [...asset.metadata.relationshipCandidates] : [];
+    if (asset.serverId) {
+      const original = String(asset.serverId), resolved = serverByRef.get(original);
+      if (resolved) asset.serverId = resolved;
+      else {
+        candidates.push({ type: "server", value: original, reason: "reference_not_found" });
+        asset.serverId = null;
+      }
+    }
+    if (asset.projectId) {
+      const original = String(asset.projectId);
+      if (!projectIds.has(original)) {
+        candidates.push({ type: "project", value: original, reason: "reference_not_found" });
+        asset.projectId = null;
+      }
+    }
+    if (candidates.length) asset.metadata = { ...asset.metadata, relationshipCandidates: candidates.slice(0, 20) };
+  }
+}
+
+function chunks<T>(values: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < values.length; index += size) result.push(values.slice(index, index + size));
+  return result;
+}
 function clean(value: unknown, max: number): string | null { const text = String(value ?? "").trim(); return text ? text.slice(0, max) : null; }
 function numberOrNull(value: unknown): number | null { const number = Number(value); return Number.isFinite(number) && number >= 0 ? number : null; }
 function parseJson(value: unknown, fallback: unknown): any { try { return JSON.parse(String(value)); } catch { return fallback; } }

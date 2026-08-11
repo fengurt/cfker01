@@ -95,6 +95,7 @@ services:
       API_KEY_SALT: ${API_KEY_SALT:?Set API_KEY_SALT in .env.docker or the shell}
       APP_NAME: ${APP_NAME:-tableai-catalog}
       ENVIRONMENT: ${ENVIRONMENT:-self-hosted}
+      DEPLOY_VERSION: ${DEPLOY_VERSION:-unknown}
       STATUS_PAGE_TITLE: ${STATUS_PAGE_TITLE:-TableAI catalog status}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       CONTENT_ENCRYPTION_KEY: ${CONTENT_ENCRYPTION_KEY:?Set CONTENT_ENCRYPTION_KEY in .env.docker or the shell}
