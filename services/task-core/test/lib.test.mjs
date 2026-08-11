@@ -20,7 +20,10 @@ test("webhook secret encryption round trips and detects tampering", () => {
   const encrypted = encryptSecret("whsec_example", key);
   assert.notEqual(encrypted, "whsec_example");
   assert.equal(decryptSecret(encrypted, key), "whsec_example");
-  assert.throws(() => decryptSecret(`${encrypted.slice(0, -2)}aa`, key));
+  // Flip a significant byte instead of the trailing base64url padding bits;
+  // the latter can decode to the same ciphertext for some random values.
+  const tampered = `${encrypted[0] === "A" ? "B" : "A"}${encrypted.slice(1)}`;
+  assert.throws(() => decryptSecret(tampered, key));
 });
 
 test("rank and serialization preserve board-independent task data", () => {
