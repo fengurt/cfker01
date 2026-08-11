@@ -8,6 +8,7 @@ SSH_TARGET="${SSH_TARGET:-opchom}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/opt/tableai-catalog}"
 BASE_URL="${BASE_URL:-https://g.ksamint.cn}"
 COMMIT="${DEPLOY_COMMIT:-$(git rev-parse HEAD)}"
+NODE_BIN="${NODE_BIN:-node}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=10)
 
 if [[ -n "$(git -C "$ROOT" status --short)" ]]; then
@@ -33,7 +34,7 @@ for attempt in {1..30}; do
   if [[ "$attempt" == 30 ]]; then echo "Catalog did not become healthy." >&2; exit 1; fi
   sleep 5
 done
-node "$ROOT/scripts/smoke-test.mjs" "$BASE_URL"
+"$NODE_BIN" "$ROOT/scripts/smoke-test.mjs" "$BASE_URL"
 REMOTE_VERSION="$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "docker inspect tableai-catalog-catalog-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^DEPLOY_VERSION=//p' | head -1")"
 if [[ "$REMOTE_VERSION" != "$COMMIT" ]]; then
   echo "Deployment version mismatch: expected ${COMMIT}, got ${REMOTE_VERSION:-unknown}." >&2
