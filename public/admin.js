@@ -1295,9 +1295,17 @@ function serverRecommendation(server) {
   const host = runtimeHost(server) || {};
   const coverage = server.runtime_coverage || {};
   const scannedAt = coverage.last_scanned_at ? Date.parse(coverage.last_scanned_at) : NaN;
-  const runtimeFresh = coverage.status === "scanned" && Number.isFinite(scannedAt) && Date.now() - scannedAt <= 15 * 60 * 1000;
-  if (!runtimeFresh)
-    return { tone: "unknown", label: locale === "zh-CN" ? "数据不足" : "Insufficient data", reason: locale === "zh-CN" ? "需要 15 分钟内的运行时采样，才可给出部署建议。" : "A runtime sample from the last 15 minutes is required for placement guidance." };
+  const hasRuntimeSample = coverage.status === "scanned" && Number.isFinite(scannedAt);
+  const sampleAgeMinutes = hasRuntimeSample ? Math.max(0, Math.round((Date.now() - scannedAt) / 60000)) : null;
+  const runtimeFresh = hasRuntimeSample && sampleAgeMinutes <= 15;
+  if (!hasRuntimeSample)
+    return { tone: "unknown", label: locale === "zh-CN" ? "尚未采集" : "Not collected", reason: locale === "zh-CN" ? "没有运行时采样，无法判断容量或给出部署建议。" : "No runtime sample is available for capacity or placement guidance." };
+  const stalePrefix = locale === "zh-CN" ? "旧数据：" : "Stale data: ";
+  const staleReason = locale === "zh-CN"
+    ? `采样已过期约 ${sampleAgeMinutes} 分钟（${formatDateTime(coverage.last_scanned_at)}），以下建议仅供参考。`
+    : `Sample is about ${sampleAgeMinutes} minutes old (${formatDateTime(coverage.last_scanned_at)}); use this guidance as provisional.`;
+  const recommendationLabel = (label) => runtimeFresh ? label : stalePrefix + label;
+  const recommendationReason = (reason) => runtimeFresh ? reason : `${staleReason} ${reason}`;
   const memory = ratio(
     Math.max(0, Number(host.memoryTotalKb || 0) - Number(host.memoryAvailableKb || 0)),
     Number(host.memoryTotalKb || 0),
@@ -1307,12 +1315,12 @@ function serverRecommendation(server) {
   const pressure = Math.max(memory || 0, disk || 0, load || 0);
   const state = fleetState(server);
   if (state === "attention" || state === "unknown" && !host.cpuCount)
-    return { tone: "danger", label: locale === "zh-CN" ? "先恢复 / 暂不部署" : "Recover before deploying", reason: locale === "zh-CN" ? "服务器不可用或运行时采样已过期。" : "Unavailable or stale runtime sample." };
+    return { tone: "danger", label: recommendationLabel(locale === "zh-CN" ? "先恢复 / 暂不部署" : "Recover before deploying"), reason: recommendationReason(locale === "zh-CN" ? "服务器不可用，部署前需要先恢复。" : "The server is unavailable and must recover before deployment.") };
   if (pressure >= 0.85)
-    return { tone: "warning", label: locale === "zh-CN" ? (dueState(server) === "is-warning" ? "优先新开服务器" : "评估升级") : (dueState(server) === "is-warning" ? "Open a new server" : "Review upgrade"), reason: locale === "zh-CN" ? `当前峰值使用率约 ${Math.round(pressure * 100)}%，建议先核对账单和规格。` : `Peak measured utilisation is about ${Math.round(pressure * 100)}%; verify billing and capacity first.` };
+    return { tone: "warning", label: recommendationLabel(locale === "zh-CN" ? (dueState(server) === "is-warning" ? "优先新开服务器" : "评估升级") : (dueState(server) === "is-warning" ? "Open a new server" : "Review upgrade")), reason: recommendationReason(locale === "zh-CN" ? `当前峰值使用率约 ${Math.round(pressure * 100)}%，建议先核对账单和规格。` : `Peak measured utilisation is about ${Math.round(pressure * 100)}%; verify billing and capacity first.`) };
   if (pressure < 0.5 && Number(server.deployment_count || 0) === 0)
-    return { tone: "healthy", label: locale === "zh-CN" ? "优先使用" : "Prefer for next deployment", reason: locale === "zh-CN" ? "采样容量充足且暂无登记部署。" : "Healthy capacity with no registered deployments." };
-  return { tone: "neutral", label: locale === "zh-CN" ? "保持" : "Keep", reason: locale === "zh-CN" ? "当前采样没有触发扩容条件。" : "Current sample does not trigger scaling." };
+    return { tone: runtimeFresh ? "healthy" : "unknown", label: recommendationLabel(locale === "zh-CN" ? "优先使用" : "Prefer for next deployment"), reason: recommendationReason(locale === "zh-CN" ? "采样容量充足且暂无登记部署。" : "Healthy capacity with no registered deployments.") };
+  return { tone: runtimeFresh ? "neutral" : "unknown", label: recommendationLabel(locale === "zh-CN" ? "保持" : "Keep"), reason: recommendationReason(locale === "zh-CN" ? "当前采样没有触发扩容条件。" : "Current sample does not trigger scaling.") };
 }
 function renderServerCostPanel() {
   const target = $("#server-cost-grid"), summary = $("#server-cost-summary");
