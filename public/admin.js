@@ -184,6 +184,9 @@ Object.assign(translations["zh-CN"], {
   resourcePath: "资源 / 本地路径",
   github: "GitHub",
   deploymentServerUrl: "部署 / 服务器 / URL",
+  deployedProjects: "已部署项目",
+  deploymentUrls: "部署 URL",
+  activeNow: "实际活跃",
   healthy: "健康",
   incidents: "未恢复事件",
   runMonitor: "立即检查",
@@ -192,6 +195,9 @@ Object.assign(translations.en, {
   resourcePath: "Resource / local path",
   github: "GitHub",
   deploymentServerUrl: "Deployment / server / URL",
+  deployedProjects: "Deployed projects",
+  deploymentUrls: "Deployment URLs",
+  activeNow: "Active now",
   healthy: "Healthy",
   incidents: "Open incidents",
   runMonitor: "Check now",
@@ -939,6 +945,23 @@ function capacityTone(value) {
         ? "is-warning"
         : "";
 }
+function capacitySpec(server, host) {
+  const cpu = numericCpu(server.cpu) || numericCpu(host?.cpuCount);
+  return `${serverClass(server)} · ${cpu > 0 ? `${cpu} vCPU` : "CPU -"}`;
+}
+function capacitySize(server, host, dimension) {
+  if (dimension === "RAM") {
+    const memoryMb = Number(server.memory_mb || 0) || Number(host?.memoryTotalKb || 0) / 1024;
+    return compactServerSize(memoryMb / 1024, "G");
+  }
+  const diskGb = Number(server.disk_gb || 0) || Number(host?.diskTotalBytes || 0) / 1024 / 1024 / 1024;
+  return compactServerSize(diskGb, "G");
+}
+function activeRuntimeAsset(item) {
+  const metadata = item.metadata || {};
+  const state = String(metadata.health || metadata.state || item.status || "").toLowerCase();
+  return /(healthy|running|up|active|reachable|available)/.test(state) && !/(down|error|unhealthy|exited|dead|unreachable|stale|expired)/.test(state);
+}
 function compactServerSize(value, unit) {
   const number = Number(value || 0);
   if (!Number.isFinite(number) || number <= 0) return "-";
@@ -1052,15 +1075,12 @@ function renderFleetOverview(allDeployments, allRuntime) {
     );
     const name = document.createElement("strong"),
       details = document.createElement("small"),
-      spec = document.createElement("small"),
       due = document.createElement("small");
     name.textContent = server.name;
     details.textContent = `${coverage.service_count || 0} ${locale === "zh-CN" ? "服务" : "services"} / ${coverage.container_count || 0} containers`;
-    spec.className = "fleet-server-spec";
-    spec.textContent = serverSpec(server);
     due.className = `fleet-server-due ${dueState(server)}`;
     due.textContent = dueLabel(server);
-    tile.append(name, details, spec, due);
+    tile.append(name, details, due);
     availability.append(tile);
   }
   const capacities = servers
@@ -1112,7 +1132,7 @@ function renderFleetOverview(allDeployments, allRuntime) {
     identity.className = "fleet-capacity-name";
     link.href = `#server-${item.server.id}`;
     link.textContent = item.server.name;
-    detail.textContent = `${serverSpec(item.server)} · load ${item.host.load1 ?? "-"}`;
+    detail.textContent = `${capacitySpec(item.server, item.host)} · load ${item.host.load1 ?? "-"}`;
     identity.append(link, detail);
     for (const [label, value, detailText] of [
       [
@@ -1132,7 +1152,7 @@ function renderFleetOverview(allDeployments, allRuntime) {
         meter = document.createElement("meter"),
         percent = document.createElement("span");
       measure.className = `fleet-capacity-measure ${capacityTone(value)}`;
-      caption.textContent = label;
+      caption.textContent = `${label} ${capacitySize(item.server, item.host, label)}`;
       meter.min = 0;
       meter.max = 1;
       meter.value = value;
@@ -1157,11 +1177,6 @@ function renderFleetOverview(allDeployments, allRuntime) {
       (sum, server) => sum + (server.dns_records?.length || 0),
       0,
     );
-  appendCoverageStat(
-    coverage,
-    allDeployments.length,
-    locale === "zh-CN" ? "登记部署" : "registered deployments",
-  );
   appendCoverageStat(
     coverage,
     allRuntime.length,
@@ -1253,19 +1268,27 @@ function renderServers() {
         ["compose_project", "runtime_service"].includes(item.kind),
       ),
     );
+  const deployedProjectKeys = new Set(
+      [...allDeployments, ...allRuntime]
+        .map((item) => item.project_id || item.project_name || (item.repository?.url ? item.repository.url : null))
+        .filter(Boolean),
+    ),
+    deploymentUrls = new Set(
+      [...allDeployments.map((item) => item.deployed_url), ...allRuntime.map((item) => item.url)]
+        .filter(Boolean),
+    ),
+    latestHealthy = Number(monitorSummary?.latestRun?.healthy_count),
+    activeNow = Number.isFinite(latestHealthy)
+      ? latestHealthy
+      : allRuntime.filter(activeRuntimeAsset).length + allDeployments.filter((item) => /healthy|reachable|active|deployed|running/i.test(String(item.effective_health_status || item.status || ""))).length;
   $("#server-total").textContent = servers.length;
+  $("#server-deployed-projects").textContent = deployedProjectKeys.size;
+  $("#server-url-count").textContent = deploymentUrls.size;
+  $("#server-active").textContent = activeNow;
   $("#server-online").textContent = servers.filter(
     (server) => fleetState(server) === "healthy",
   ).length;
   $("#server-incidents").textContent = monitorSummary?.openEvents || 0;
-  $("#server-deployments").textContent =
-    allDeployments.length + allRuntime.length;
-  $("#server-repositories").textContent = [
-    ...allDeployments.filter(
-      (item) => item.repository_url || item.backup_repository_url,
-    ),
-    ...allRuntime.filter((item) => item.repository?.url),
-  ].length;
   const latest = monitorSummary?.latestRun;
   $("#monitor-status").textContent = latest
     ? `${locale === "zh-CN" ? "端点最近检查" : "Latest endpoint check"} ${formatDateTime(latest.completed_at || latest.started_at)} / ${latest.healthy_count || 0} healthy / ${latest.degraded_count || 0} degraded / ${latest.down_count || 0} down`
