@@ -956,9 +956,15 @@ function serverClass(server) {
     return locale === "zh-CN" ? "腾讯云" : "Tencent Cloud";
   return server.provider || "-";
 }
+function numericCpu(value) {
+  const direct = Number(value);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const match = String(value || "").match(/[0-9]+(?:\.[0-9]+)?/);
+  return match ? Number(match[0]) : 0;
+}
 function serverSpec(server) {
   const host = runtimeHost(server) || {},
-    cpu = Number(server.cpu || host.cpuCount || 0),
+    cpu = numericCpu(server.cpu) || numericCpu(host.cpuCount),
     memoryMb =
       Number(server.memory_mb || 0) || Number(host.memoryTotalKb || 0) / 1024,
     diskGb =
@@ -1186,6 +1192,11 @@ function renderFleetOverview(allDeployments, allRuntime) {
 }
 function serverRecommendation(server) {
   const host = runtimeHost(server) || {};
+  const coverage = server.runtime_coverage || {};
+  const scannedAt = coverage.last_scanned_at ? Date.parse(coverage.last_scanned_at) : NaN;
+  const runtimeFresh = coverage.status === "scanned" && Number.isFinite(scannedAt) && Date.now() - scannedAt <= 15 * 60 * 1000;
+  if (!runtimeFresh)
+    return { tone: "unknown", label: locale === "zh-CN" ? "数据不足" : "Insufficient data", reason: locale === "zh-CN" ? "需要 15 分钟内的运行时采样，才可给出部署建议。" : "A runtime sample from the last 15 minutes is required for placement guidance." };
   const memory = ratio(
     Math.max(0, Number(host.memoryTotalKb || 0) - Number(host.memoryAvailableKb || 0)),
     Number(host.memoryTotalKb || 0),
@@ -1216,7 +1227,7 @@ function renderServerCostPanel() {
     summary.textContent = locale === "zh-CN" ? "未取得腾讯云账单；显示容量建议，不虚构价格。" : "Tencent billing is unavailable; capacity guidance is shown without invented prices.";
   }
   const ranked = [...servers].sort((left, right) => {
-    const rank = { danger: 0, warning: 1, healthy: 2, neutral: 3 };
+    const rank = { danger: 0, warning: 1, healthy: 2, neutral: 3, unknown: 4 };
     return rank[serverRecommendation(left).tone] - rank[serverRecommendation(right).tone];
   });
   for (const server of ranked) {

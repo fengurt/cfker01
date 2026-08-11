@@ -12,7 +12,7 @@ export async function handleAdminServers(request:Request,env:Env,ctx:ExecutionCo
       const rows=await env.MGMT_DB.prepare(`SELECT id,name,provider,architecture,cpu,memory_mb,disk_gb,due_at,status,manual_status,cloud_status,cloud_checked_at,health_status,last_checked_at FROM servers ORDER BY name`).all<Record<string,unknown>>();
       return Response.json({data:(rows.results??[]).map(server=>({...server,effective_status:effectiveStatus(server),is_stale:isStale(server)}))});
     }
-    const [servers,deployments,runtimeAssets,dnsAssets,repositoryAssets,billingAssets]=await Promise.all([
+    const [servers,deployments,runtimeAssets,dnsAssets,repositoryAssets,billingAssets,billingRun]=await Promise.all([
       env.MGMT_DB.prepare(`SELECT s.*,(SELECT COUNT(*) FROM deployments d WHERE d.server_id=s.id) deployment_count FROM servers s ORDER BY deployment_count ASC,s.name`).all<Record<string,unknown>>(),
       env.MGMT_DB.prepare(`SELECT d.id,d.server_id,d.project_id,d.environment,d.deployed_url,d.version,d.status,d.deployed_at,d.last_checked_at,d.last_latency_ms,d.last_error,p.name project_name,p.repository_url,p.source_ref,p.resource_types,
         (SELECT repository_url FROM backup_repositories b WHERE b.project_id=p.id ORDER BY b.updated_at DESC LIMIT 1) backup_repository_url,
@@ -29,16 +29,25 @@ export async function handleAdminServers(request:Request,env:Env,ctx:ExecutionCo
       env.MGMT_DB.prepare(`SELECT * FROM discovered_assets WHERE provider IN ('docker','tencent') AND kind IN ('container','compose_project','server_runtime','runtime_container','runtime_service','tat_agent') AND status!='stale' AND server_id IS NOT NULL ORDER BY server_id,kind,name`).all<Record<string,unknown>>(),
       env.MGMT_DB.prepare(`SELECT * FROM discovered_assets WHERE provider='tencent' AND kind='dns_record' AND status!='stale' AND server_id IS NOT NULL ORDER BY server_id,name`).all<Record<string,unknown>>(),
       env.MGMT_DB.prepare(`SELECT id,name,url,metadata,last_seen_at FROM discovered_assets WHERE provider='github' AND kind='repository' AND status!='stale' ORDER BY last_seen_at DESC`).all<Record<string,unknown>>(),
-      env.MGMT_DB.prepare(`SELECT id,server_id,kind,name,metadata,last_seen_at,status FROM discovered_assets WHERE provider='tencent' AND kind IN ('billing_account','billing_resource') AND status!='stale' ORDER BY last_seen_at DESC`).all<Record<string,unknown>>()
+      env.MGMT_DB.prepare(`SELECT id,server_id,kind,name,metadata,last_seen_at,status FROM discovered_assets WHERE provider='tencent' AND kind IN ('billing_account','billing_resource') AND status!='stale' ORDER BY last_seen_at DESC`).all<Record<string,unknown>>(),
+      env.MGMT_DB.prepare(`SELECT status,started_at,completed_at,error_code,error_message FROM asset_discovery_runs WHERE provider='tencent' ORDER BY started_at DESC LIMIT 1`).first<Record<string,unknown>>()
     ]);
     const byServer=new Map<string,Record<string,unknown>[]>();for(const deployment of deployments.results??[]){const key=String(deployment.server_id),values=byServer.get(key)??[];values.push(deployment);byServer.set(key,values);}
-    const runtimeByServer=groupAssets(runtimeAssets.results??[]),dnsByServer=groupAssets(dnsAssets.results??[]),repositories=repositoryIndex(repositoryAssets.results??[]),billingByServer=groupAssets(billingAssets.results??[]);
     const billingRows:Record<string,unknown>[]=(billingAssets.results??[]).map(value=>({...value,metadata:parseMetadata(value.metadata)}));
+    const serverRows=servers.results??[], runtimeByServer=groupAssets(runtimeAssets.results??[]),dnsByServer=groupAssets(dnsAssets.results??[]),repositories=repositoryIndex(repositoryAssets.results??[]),billingByServer=groupAssets(billingAssets.results??[]);
+    for(const row of billingRows){
+      if(row.kind!=="billing_resource"||row.server_id)continue;
+      const metadata=parseMetadata(row.metadata),resourceId=String(metadata.resourceId??"");
+      const match=serverRows.find(server=>resourceId&&String(server.provider_resource_id??"")===resourceId);
+      if(match){const key=String(match.id),values=billingByServer.get(key)??[];values.push(row);billingByServer.set(key,values);}
+    }
     const billingAccount=billingRows.find(value=>value.kind==="billing_account");
     const billingResources=billingRows.filter(value=>value.kind==="billing_resource");
     const billingMetadata=billingAccount?parseMetadata(billingAccount.metadata):{};
-    const billingSummary={status:billingAccount?"available":"unavailable",account:billingMetadata.accountId??null,balanceCNY:billingMetadata.balanceCNY??null,frozenCNY:billingMetadata.frozenCNY??null,month:billingMetadata.month??null,lastVerifiedAt:billingAccount?.last_seen_at??null,resourceCount:billingResources.length};
-    return Response.json({data:(servers.results??[]).map(server=>{const runtime=(runtimeByServer.get(String(server.id))??[]).map(value=>attachRepository(value,repositories)),dns=dnsByServer.get(String(server.id))??[],billing=billingByServer.get(String(server.id))??[];return{...server,effective_status:effectiveStatus(server),is_stale:isStale(server),runtime_coverage:runtimeCoverage(runtime),runtime_assets:runtime,dns_records:dns,billing:billingSummaryForServer(billing),deployments:(byServer.get(String(server.id))??[]).map(deployment=>({...deployment,effective_health_status:deploymentHealth(deployment)}))};}),meta:{billing:billingSummary}});
+    const billingRunAt=Date.parse(String(billingRun?.completed_at??billingRun?.started_at??"")),billingRunFresh=Number.isFinite(billingRunAt)&&Date.now()-billingRunAt<=26*60*60*1000,billingRunComplete=["complete","completed"].includes(String(billingRun?.status??""));
+    const billingStatus=billingAccount&&billingRunComplete&&billingRunFresh?"available":billingAccount?"stale":"unavailable";
+    const billingSummary={status:billingStatus,account:billingMetadata.accountId??null,balanceCNY:billingMetadata.balanceCNY??null,frozenCNY:billingMetadata.frozenCNY??null,month:billingMetadata.month??null,lastVerifiedAt:billingAccount?.last_seen_at??null,resourceCount:billingResources.length,runStatus:billingRun?.status??null,runCompletedAt:billingRun?.completed_at??null,error:billingRun?.error_message??null};
+    return Response.json({data:serverRows.map(server=>{const runtime=(runtimeByServer.get(String(server.id))??[]).map(value=>attachRepository(value,repositories)),dns=dnsByServer.get(String(server.id))??[],billing=billingByServer.get(String(server.id))??[];return{...server,effective_status:effectiveStatus(server),is_stale:isStale(server),runtime_coverage:runtimeCoverage(runtime),runtime_assets:runtime,dns_records:dns,billing:billingSummaryForServer(billing),deployments:(byServer.get(String(server.id))??[]).map(deployment=>({...deployment,effective_health_status:deploymentHealth(deployment)}))};}),meta:{billing:billingSummary}});
   }
   if(request.method!=="PUT"&&request.method!=="POST")return Response.json({error:"method_not_allowed"},{status:405});
   let body:Record<string,any>;try{body=await request.json();}catch{return Response.json({error:"invalid_json"},{status:400});}
