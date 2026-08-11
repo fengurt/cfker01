@@ -14,6 +14,7 @@ import {
   clearAdminSession,
   createAdminSession,
   refreshAdminSession,
+  reauthenticateAdmin,
   requireAdminRole,
 } from "./lib/auth";
 import { handleAdminResourceOps } from "./routes/admin-resource-ops";
@@ -48,6 +49,8 @@ export async function handleRequest(
     if (auth) return auth;
     return refreshAdminSession(request, env);
   }
+  if (pathname === "/admin/reauth" && request.method === "POST")
+    return reauthenticateAdmin(request, env);
 
   if (
     pathname === "/api/task/v1" ||

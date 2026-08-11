@@ -1,4 +1,4 @@
-import { isValidRequestOrigin, readAdminSession, requireAdminRole } from "../lib/auth";
+import { isValidRequestOrigin, readAdminSession, requireAdminRole, requireRecentAdminAuth } from "../lib/auth";
 import { hashKey } from "../lib/apikey";
 import { createScanJob, ensureDueScanJobs } from "../lib/scan-jobs";
 import { generateScannerKey } from "../lib/scanner-auth";
@@ -6,6 +6,7 @@ import { createResourceSnapshot, latestResourceSnapshot } from "../lib/resource-
 import { getIncident, listIncidents, openIncident, updateIncident } from "../lib/incident-store";
 import type { IncidentSeverity } from "../lib/incidents";
 import { rankPlacement } from "../lib/placement";
+import { getApiProvider, getApiProviderHistory, listApiProviders, queueApiProviderProbe } from "../lib/api-provider-monitor";
 
 const SECRET_FIELD = /(secret|token|password|credential|private.?key|api.?key)/i;
 
@@ -27,6 +28,12 @@ export async function handleAdminApiV1(request: Request, env: Env, ctx: Executio
   try {
     if (resource === "openapi.json" && request.method === "GET") return openApi(request);
     if (resource === "overview" && request.method === "GET") return overview(request, env);
+    if (resource === "api-providers") {
+      if (!id && request.method === "GET") return apiProviders(request, env);
+      if (id && action === "history" && request.method === "GET") return apiProviderHistory(request, env, id, url);
+      if (id && action === "probe" && request.method === "POST") return createApiProviderProbe(request, env, id);
+      if (id && !action && request.method === "GET") return apiProvider(request, env, id);
+    }
     if (resource === "repository-audit") {
       if (id === "runs" && request.method === "GET") return repositoryAuditRuns(request, env);
       if (id === "repositories" && request.method === "GET") return repositoryAuditRepositories(request, env, url);
@@ -72,6 +79,10 @@ export async function handleAdminApiV1(request: Request, env: Env, ctx: Executio
     }
     if (resource === "service-keys") {
       if (!id && request.method === "GET") return serviceKeys(request, env);
+      if (!["GET", "HEAD"].includes(request.method)) {
+        const fresh = await requireRecentAdminAuth(request, env);
+        if (fresh) return v1Error(request, "reauthentication_required", "Password verification is required for service-key changes.", 401);
+      }
       if (!id && request.method === "POST") return createServiceKey(request, env, ctx);
       if (id && action === "rotate" && request.method === "POST") return rotateServiceKey(request, env, ctx, id);
       if (id && request.method === "DELETE") return revokeServiceKey(request, env, ctx, id);
@@ -103,6 +114,34 @@ async function overview(request: Request, env: Env): Promise<Response> {
     env.MGMT_DB.prepare(`SELECT id,connector_id,status,error_code,error_message,updated_at FROM scan_jobs WHERE error_code IS NOT NULL ORDER BY updated_at DESC LIMIT 10`).all(),
   ]);
   return v1Data(request, { connectors: connectors.results ?? [], assets: assets.results ?? [], jobs: jobs.results ?? [], recentErrors: errors.results ?? [] }, { generatedAt: new Date().toISOString() });
+}
+
+async function apiProviders(request: Request, env: Env): Promise<Response> {
+  const providers = await listApiProviders(env);
+  return v1Data(request, providers, { count: providers.length, generatedAt: new Date().toISOString() });
+}
+
+async function apiProvider(request: Request, env: Env, id: string): Promise<Response> {
+  const provider = await getApiProvider(env, id);
+  return provider ? v1Data(request, provider) : v1Error(request, "not_found", "API provider connector not found.", 404);
+}
+
+async function apiProviderHistory(request: Request, env: Env, id: string, url: URL): Promise<Response> {
+  if (!(await getApiProvider(env, id))) return v1Error(request, "not_found", "API provider connector not found.", 404);
+  const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit") ?? 100)));
+  return v1Data(request, await getApiProviderHistory(env, id, limit), { limit });
+}
+
+async function createApiProviderProbe(request: Request, env: Env, id: string): Promise<Response> {
+  const body = await readObject(request) ?? {};
+  const mode = body.mode === "inference" ? "inference" : "standard";
+  if (mode === "inference") {
+    const fresh = await requireRecentAdminAuth(request, env);
+    if (fresh) return v1Error(request, "reauthentication_required", "Password verification is required for paid inference probes.", 401);
+  }
+  const session = await readAdminSession(request, env);
+  const job = await queueApiProviderProbe(env, id, mode, cleanText(request.headers.get("Idempotency-Key"), 200), session?.userId ?? "admin_token");
+  return job ? v1Data(request, job, undefined, 202) : v1Error(request, "not_found", "API provider connector not found or disabled.", 404);
 }
 
 async function repositoryAuditRuns(request: Request, env: Env): Promise<Response> {
@@ -463,7 +502,7 @@ async function createServiceKey(request: Request, env: Env, ctx: ExecutionContex
   if (!env.API_KEY_SALT) return v1Error(request, "key_salt_unconfigured", "API_KEY_SALT is not configured.", 503);
   const body = await readObject(request);
   const name = cleanText(body?.name, 100);
-  const scopes = normalizeAllowed(body?.scopes, ["jobs:poll", "jobs:claim", "ingest:write"]);
+  const scopes = normalizeAllowed(body?.scopes, ["jobs:poll", "jobs:claim", "ingest:write", "api-probes:write"]);
   const connectorIds = normalizeStrings(body?.connectorIds);
   const providers = normalizeStrings(body?.providers);
   const accounts = normalizeStrings(body?.accounts);
@@ -524,6 +563,7 @@ function openApi(request: Request): Response {
     "/overview": ["get"], "/resource-snapshots/current": ["get"], "/resource-snapshots": ["post"], "/deployment-requirements/{projectId}": ["get", "patch"], "/placement-recommendations/{projectId}": ["get"], "/sources": ["get"], "/sources/{id}": ["patch"], "/resources": ["get"], "/resources/{id}": ["get", "patch"],
     "/export/assets.ndjson": ["get"], "/audit/export.ndjson": ["get"], "/repository-audit/runs": ["get"], "/repository-audit/repositories": ["get"], "/repository-audit/repositories/{id}": ["get"], "/deployment-evidence": ["get"], "/server-status": ["get"], "/scans": ["post"], "/scans/{id}": ["get"], "/scans/{id}/cancel": ["post"], "/scans/{id}/retry": ["post"],
     "/resource-links": ["get"], "/resource-links/{id}": ["patch"], "/incidents": ["get", "post"], "/incidents/{id}": ["get", "patch"], "/service-keys": ["get", "post"], "/service-keys/{id}": ["delete"], "/service-keys/{id}/rotate": ["post"],
+    "/api-providers": ["get"], "/api-providers/{id}": ["get"], "/api-providers/{id}/history": ["get"], "/api-providers/{id}/probe": ["post"],
     "/tasks": ["get", "post"], "/tasks/{id}": ["get", "patch"], "/tasks/{id}/transition": ["post"], "/tasks/{id}/comments": ["post"], "/tasks/{id}/dependencies": ["post"], "/tasks/gantt": ["get"],
     "/task-people": ["get", "post"], "/task-people/{id}": ["patch"], "/task-milestones": ["get", "post"], "/task-milestones/{id}": ["patch"], "/task-views": ["get", "post"], "/task-views/{id}": ["delete"],
   })) paths[path] = Object.fromEntries(methods.map((method) => [method, { responses: { "200": { description: "Success" } } }]));

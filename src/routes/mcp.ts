@@ -10,6 +10,7 @@ import {
   type TaskActor,
   type TaskInput,
 } from "../lib/tasks";
+import { listApiProviders, queueApiProviderProbe } from "../lib/api-provider-monitor";
 
 const SERVER_INFO = {
   name: "cfker01",
@@ -24,7 +25,7 @@ const SERVER_CARD = {
   auth: {
     type: "apiKey",
     header: "X-Api-Key",
-    scopes: ["read", "skills:write", "tasks:read", "tasks:write"],
+    scopes: ["read", "skills:write", "tasks:read", "tasks:write", "api-probes:read", "api-probes:write"],
   },
   endpoints: { tools: "/mcp", resources: "/v1/status" },
 };
@@ -193,6 +194,11 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "api_providers.probe",
+    description: "Queue an explicit API provider health probe. Requires api-probes:write.",
+    inputSchema: { type: "object", required: ["connectorId"], properties: { connectorId: { type: "string" }, mode: { type: "string", enum: ["standard", "inference"], default: "standard" }, idempotencyKey: { type: "string" } } },
+  },
 ];
 const RESOURCES = [
   {
@@ -203,6 +209,11 @@ const RESOURCES = [
   {
     uri: "ops://tasks/snapshot",
     name: "Private task planning snapshot",
+    mimeType: "application/json",
+  },
+  {
+    uri: "ops://api-providers/snapshot",
+    name: "Private API provider health snapshot",
     mimeType: "application/json",
   },
 ];
@@ -217,6 +228,7 @@ const TASK_WRITE_TOOLS = new Set([
   "tasks.update",
   "tasks.comment",
 ]);
+const API_PROBE_WRITE_TOOLS = new Set(["api_providers.probe"]);
 
 interface McpRequest {
   jsonrpc: "2.0";
@@ -387,12 +399,15 @@ export async function handleMcp(
   const taskResource =
     body.method === "resources/read" &&
     body.params?.uri === "ops://tasks/snapshot";
+  const apiProviderResource = body.method === "resources/read" && body.params?.uri === "ops://api-providers/snapshot";
   const scope =
     (body.method === "tools/call" && TASK_READ_TOOLS.has(name)) || taskResource
       ? "tasks:read"
       : body.method === "tools/call" && TASK_WRITE_TOOLS.has(name)
         ? "tasks:write"
-        : "read";
+        : body.method === "tools/call" && API_PROBE_WRITE_TOOLS.has(name)
+          ? "api-probes:write"
+          : apiProviderResource ? "api-probes:read" : "read";
   const auth = await requireApiKey(request, env, ctx, scope);
   if (auth) return auth;
   if (body.method === "tools/call" && WRITE_TOOLS.has(name)) {
@@ -484,6 +499,9 @@ async function handleResourceRead(
       }),
     );
   }
+  if (uri === "ops://api-providers/snapshot") {
+    return jsonResponse(makeResult(body.id, { contents: [{ uri, mimeType: "application/json", text: JSON.stringify({ generatedAt: new Date().toISOString(), providers: await listApiProviders(env) }, null, 2) }] }));
+  }
   return jsonResponse(makeError(body.id, -32602, "resource_not_found"), 404);
 }
 
@@ -546,6 +564,12 @@ async function handleToolCall(
   if (name === "tasks.comment")
     return commentTaskTool(request, body.id, env, args);
   if (name === "tasks.plan") return planTasks(body.id, env, args);
+  if (name === "api_providers.probe") {
+    const connectorId = String(args.connectorId ?? ""), mode = args.mode === "inference" ? "inference" : "standard";
+    const actor = await mcpActor(request, env);
+    const job = await queueApiProviderProbe(env, connectorId, mode, typeof args.idempotencyKey === "string" ? args.idempotencyKey : null, actor.id ?? "mcp");
+    return job ? jsonResponse(textResult(body.id, job)) : jsonResponse(makeError(body.id, -32602, "provider_not_found"), 404);
+  }
   return jsonResponse(makeError(body.id, -32601, `unknown_tool: ${name}`), 400);
 }
 

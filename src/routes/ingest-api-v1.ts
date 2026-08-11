@@ -1,5 +1,6 @@
 import { authenticateScanner, scannerCanUse, type ScannerPrincipal } from "../lib/scanner-auth";
 import { ensureDueScanJobs } from "../lib/scan-jobs";
+import { containsSecretShapedField, ingestApiProviderProbe } from "../lib/api-provider-monitor";
 
 const SCHEMA_VERSION = "asset-discovery-v1";
 const MAX_BATCH_ASSETS = 200;
@@ -11,6 +12,21 @@ export async function handleIngestApiV1(request: Request, env: Env, ctx: Executi
   const parts = url.pathname.split("/").filter(Boolean).slice(3);
   const [resource, id, action, batchIndex] = parts;
   try {
+    if (resource === "api-provider-probes" && !id && request.method === "POST") {
+      const auth = await authenticateScanner(request, env, ctx, "api-probes:write");
+      if (auth.response) return auth.response;
+      return ingestProviderProbe(request, env, auth.principal!);
+    }
+    if (resource === "api-provider-probes" && id === "jobs" && !action && request.method === "GET") {
+      const auth = await authenticateScanner(request, env, ctx, "api-probes:write");
+      if (auth.response) return auth.response;
+      return listProviderProbeJobs(request, env, auth.principal!);
+    }
+    if (resource === "api-provider-probes" && id === "jobs" && action && batchIndex === "claim" && request.method === "POST") {
+      const auth = await authenticateScanner(request, env, ctx, "api-probes:write");
+      if (auth.response) return auth.response;
+      return claimProviderProbeJob(request, env, action, auth.principal!);
+    }
     if (resource === "jobs" && !id && request.method === "GET") {
       const auth = await authenticateScanner(request, env, ctx, "jobs:poll");
       if (auth.response) return auth.response;
@@ -47,6 +63,30 @@ export async function handleIngestApiV1(request: Request, env: Env, ctx: Executi
     console.error(JSON.stringify({ event: "ingest_api.error", requestId: requestId(request), path: url.pathname, error: message }));
     return ingestError(request, "internal_error", "The scanner request could not be completed.", 500);
   }
+}
+
+async function listProviderProbeJobs(request: Request, env: Env, principal: ScannerPrincipal): Promise<Response> {
+  if (principal.providers.length && !principal.providers.includes("*") && !principal.providers.includes("api-provider")) return ingestError(request, "source_forbidden", "This key cannot poll API provider jobs.", 403);
+  const rows = await env.MGMT_DB.prepare(`SELECT id,connector_id,mode,status,queued_at FROM api_provider_probe_jobs WHERE status='queued' ORDER BY queued_at LIMIT 20`).all<Record<string, unknown>>();
+  return ingestData(request, (rows.results ?? []).map((row) => ({ id: row.id, connectorId: row.connector_id, mode: row.mode, status: row.status, queuedAt: row.queued_at })), { pollAfterSeconds: 60 });
+}
+
+async function claimProviderProbeJob(request: Request, env: Env, id: string, principal: ScannerPrincipal): Promise<Response> {
+  if (principal.providers.length && !principal.providers.includes("*") && !principal.providers.includes("api-provider")) return ingestError(request, "source_forbidden", "This key cannot claim API provider jobs.", 403);
+  const now = new Date().toISOString();
+  const result = await env.MGMT_DB.prepare(`UPDATE api_provider_probe_jobs SET status='claimed',claimed_at=?1,updated_at=?1 WHERE id=?2 AND status='queued'`).bind(now, id).run();
+  if (!result.meta?.changes) return ingestError(request, "job_not_available", "Probe job is not available.", 409);
+  return ingestData(request, { id, status: "claimed", claimedAt: now });
+}
+
+async function ingestProviderProbe(request: Request, env: Env, principal: ScannerPrincipal): Promise<Response> {
+  const body = await readObject(request);
+  if (!body || containsSecretShapedField(body)) return ingestError(request, "secret_field_rejected", "Probe payload contains a forbidden secret-shaped field.", 400);
+  if (principal.providers.length && !principal.providers.includes("*") && !principal.providers.includes("api-provider")) return ingestError(request, "source_forbidden", "This key cannot submit API provider probes.", 403);
+  const id = request.headers.get("CF-Ray") ?? request.headers.get("X-Request-Id") ?? crypto.randomUUID();
+  const result = await ingestApiProviderProbe(env, body, id);
+  if (result.error) return ingestError(request, result.error, "API provider probe payload is invalid.", result.error === "unknown_connector" ? 404 : 400);
+  return ingestData(request, result.data, result.replay ? { idempotentReplay: true } : {}, result.replay ? 200 : 201);
 }
 
 async function listJobs(request: Request, env: Env, principal: ScannerPrincipal): Promise<Response> {

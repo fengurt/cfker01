@@ -53,7 +53,7 @@ export async function requireAdminRole(
 export async function readAdminSession(
   request: Request,
   env: Env,
-): Promise<{ userId: string; phone: string; role: string } | null> {
+): Promise<{ userId: string; phone: string; role: string; reauthenticatedAt: string | null } | null> {
   if (!env.ADMIN_TOKEN) return null;
   const cookie = cookieValue(request, SESSION_NAME);
   if (cookie) {
@@ -72,6 +72,7 @@ export async function readAdminSession(
           phone?: string;
           role?: string;
           exp?: number;
+          auth?: string;
         };
         const role = value.role;
         if (
@@ -82,7 +83,7 @@ export async function readAdminSession(
           value.exp &&
           value.exp > Math.floor(Date.now() / 1000)
         )
-          return { userId: value.uid, phone: value.phone, role };
+          return { userId: value.uid, phone: value.phone, role, reauthenticatedAt: value.auth ?? null };
       } catch {}
   }
   return readTrustedDevice(request, env);
@@ -102,6 +103,7 @@ export async function refreshAdminSession(
         uid: session.userId,
         phone: session.phone,
         role: session.role,
+        auth: session.reauthenticatedAt,
         exp: expiresAt,
       }),
     ),
@@ -138,6 +140,7 @@ export async function refreshAdminSession(
       phone: session.phone,
       expiresAt: new Date(expiresAt * 1000).toISOString(),
       deviceExpiresAt,
+      recentlyAuthenticated: isRecentAuthentication(session.reauthenticatedAt),
     },
     { headers },
   );
@@ -259,6 +262,7 @@ export async function createAdminSession(
       uid: user.id,
       phone: user.phone_e164,
       role: user.role,
+      auth: timestamp,
       exp: expiresAt,
     }),
   );
@@ -276,7 +280,7 @@ export async function createAdminSession(
     )
     .run();
   await env.MGMT_DB.prepare(
-    `INSERT INTO admin_device_sessions(id,user_id,token_hash,ip_prefix,user_agent_hash,expires_at,last_seen_at,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)`,
+    `INSERT INTO admin_device_sessions(id,user_id,token_hash,ip_prefix,user_agent_hash,expires_at,last_seen_at,created_at,last_reauthenticated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7,?7)`,
   )
     .bind(
       crypto.randomUUID(),
@@ -304,6 +308,7 @@ export async function createAdminSession(
       phone: user.phone_e164,
       expiresAt: new Date(expiresAt * 1000).toISOString(),
       deviceExpiresAt,
+      recentlyAuthenticated: true,
     },
     { headers },
   );
@@ -376,6 +381,57 @@ export async function clearAdminSession(
   headers.append("Set-Cookie", deviceCookie("", 0, request, env));
   return Response.json({ ok: true }, { headers });
 }
+
+/** Require a fresh password verification for high-impact mutations. */
+export async function requireRecentAdminAuth(
+  request: Request,
+  env: Env,
+  maxAgeSeconds = 15 * 60,
+): Promise<Response | null> {
+  const header = request.headers.get("Authorization");
+  const tokenValue = header?.startsWith("Bearer ") ? header.slice(7) : null;
+  if (tokenValue && env.ADMIN_TOKEN && (await timingSafeEqual(tokenValue, env.ADMIN_TOKEN))) return null;
+  const session = await readAdminSession(request, env);
+  if (!session) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (!isRecentAuthentication(session.reauthenticatedAt, maxAgeSeconds)) {
+    return Response.json({ error: "reauthentication_required" }, { status: 401 });
+  }
+  return null;
+}
+
+export async function reauthenticateAdmin(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (!isValidRequestOrigin(request)) return Response.json({ error: "invalid_origin" }, { status: 403 });
+  const session = await readAdminSession(request, env);
+  if (!session) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const body = await request.json<{ password?: unknown }>().catch(() => null);
+  const password = String(body?.password ?? "");
+  const user = await findAdminByPhone(env, session.phone);
+  if (!user || !user.active || !(await verifyPassword(password, user.password_hash, user.password_salt, user.password_iterations))) {
+    return Response.json({ error: "invalid_credentials" }, { status: 401 });
+  }
+  const now = new Date().toISOString();
+  const rawDevice = cookieValue(request, DEVICE_NAME);
+  if (rawDevice) {
+    await env.MGMT_DB.prepare(`UPDATE admin_device_sessions SET last_reauthenticated_at=?1,last_seen_at=?1 WHERE token_hash=?2 AND revoked_at IS NULL`)
+      .bind(now, await sign(rawDevice, env.ADMIN_TOKEN ?? "")).run();
+  }
+  await env.MGMT_DB.prepare(`INSERT INTO audit_events(event_type,payload,created_at) VALUES('admin.reauthenticated',?1,?2)`)
+    .bind(JSON.stringify({ userId: session.userId }), now).run();
+  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+  const payload = encodeText(JSON.stringify({ uid: session.userId, phone: session.phone, role: session.role, auth: now, exp }));
+  const signature = await sign(payload, sessionSecret(env));
+  return Response.json({ ok: true, reauthenticatedAt: now }, {
+    headers: { "Cache-Control": "no-store", "Set-Cookie": sessionCookie(`${payload}.${signature}`, SESSION_TTL_SECONDS, request, env) },
+  });
+}
+
+function isRecentAuthentication(value: string | null | undefined, maxAgeSeconds = 15 * 60): boolean {
+  const timestamp = value ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(timestamp) && Date.now() - timestamp <= maxAgeSeconds * 1000;
+}
 export function normalizePhone(value: string) {
   const digits = value.replace(/\D/g, "");
   if (/^1\d{10}$/.test(digits)) return `+86${digits}`;
@@ -437,11 +493,11 @@ function findAdminByPhone(env: Env, phone: string) {
 async function readTrustedDevice(
   request: Request,
   env: Env,
-): Promise<{ userId: string; phone: string; role: string } | null> {
+): Promise<{ userId: string; phone: string; role: string; reauthenticatedAt: string | null } | null> {
   const raw = cookieValue(request, DEVICE_NAME);
   if (!raw || !env.ADMIN_TOKEN) return null;
   const row = await env.MGMT_DB.prepare(
-    `SELECT d.user_agent_hash,u.id,u.phone_e164,u.role,u.active FROM admin_device_sessions d JOIN admin_users u ON u.id=d.user_id WHERE d.token_hash=?1 AND d.revoked_at IS NULL AND datetime(d.expires_at)>CURRENT_TIMESTAMP`,
+    `SELECT d.user_agent_hash,d.last_reauthenticated_at,u.id,u.phone_e164,u.role,u.active FROM admin_device_sessions d JOIN admin_users u ON u.id=d.user_id WHERE d.token_hash=?1 AND d.revoked_at IS NULL AND datetime(d.expires_at)>CURRENT_TIMESTAMP`,
   )
     .bind(await sign(raw, env.ADMIN_TOKEN))
     .first<{
@@ -450,6 +506,7 @@ async function readTrustedDevice(
       phone_e164: string;
       role: string;
       active: number;
+      last_reauthenticated_at: string | null;
     }>();
   if (
     !row ||
@@ -458,7 +515,7 @@ async function readTrustedDevice(
     row.user_agent_hash !== (await userAgentHash(request, env))
   )
     return null;
-  return { userId: row.id, phone: row.phone_e164, role: row.role };
+  return { userId: row.id, phone: row.phone_e164, role: row.role, reauthenticatedAt: row.last_reauthenticated_at };
 }
 async function canBootstrapLocalAdmin(request: Request, env: Env) {
   const url = new URL(request.url);

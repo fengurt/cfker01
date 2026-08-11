@@ -212,6 +212,16 @@ describe("cfker01 worker", () => {
     expect(trustedDevice.status).toBe(200);
     expect(trustedDevice.headers.get("set-cookie")).toContain("tableai_admin_device=");
     expect(trustedDevice.headers.get("set-cookie")).toContain("Max-Age=7776000");
+    await env.MGMT_DB.prepare(`UPDATE admin_device_sessions SET last_reauthenticated_at='2020-01-01T00:00:00.000Z' WHERE revoked_at IS NULL`).run();
+    const sensitiveDenied = await worker.fetch(new Request("http://127.0.0.1/api/admin/v1/service-keys", { method: "POST", headers: { Cookie: deviceCookie!, Origin: "http://127.0.0.1", "Content-Type": "application/json" }, body: JSON.stringify({ name: "step-up-test", scopes: ["api-probes:write"], providers: ["api-provider"] }) }), env, ctx);
+    expect(sensitiveDenied.status).toBe(401);
+    expect(await sensitiveDenied.json()).toMatchObject({ error: { code: "reauthentication_required" } });
+    const reauthenticated = await worker.fetch(new Request("http://127.0.0.1/admin/reauth", { method: "POST", headers: { Cookie: deviceCookie!, Origin: "http://127.0.0.1", "Content-Type": "application/json" }, body: JSON.stringify({ password: credentials.password }) }), env, ctx);
+    expect(reauthenticated.status).toBe(200);
+    const freshSessionCookie = reauthenticated.headers.get("set-cookie")?.split(";", 1)[0];
+    expect(freshSessionCookie).toContain("tableai_admin=");
+    const sensitiveAllowed = await worker.fetch(new Request("http://127.0.0.1/api/admin/v1/service-keys", { method: "POST", headers: { Cookie: `${freshSessionCookie}; ${deviceCookie}`, Origin: "http://127.0.0.1", "Content-Type": "application/json" }, body: JSON.stringify({ name: "step-up-test", scopes: ["api-probes:write"], providers: ["api-provider"] }) }), env, ctx);
+    expect(sensitiveAllowed.status).toBe(201);
     const logout = await worker.fetch(new Request("http://127.0.0.1/admin/logout", { method:"POST", headers:{Cookie:deviceCookie!} }), env, ctx);
     expect(logout.status).toBe(200);
     const revokedDevice = await worker.fetch(new Request("http://127.0.0.1/admin/session", { headers: { Cookie: deviceCookie! } }), env, ctx);
