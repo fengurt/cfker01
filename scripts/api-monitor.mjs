@@ -7,6 +7,7 @@ const inferenceIntervalMs = Number(process.env.API_INFERENCE_INTERVAL_MS || 24 *
 const timeoutMs = Number(process.env.API_PROBE_TIMEOUT_MS || 15000);
 const oneShot = process.env.API_MONITOR_ONCE === "1";
 const providerAllowlist = new Set(String(process.env.API_MONITOR_PROVIDER_ALLOWLIST || "").split(",").map((value) => value.trim()).filter(Boolean));
+const providerAllowed = (id) => providerAllowlist.size === 0 || providerAllowlist.has(id);
 
 const providers = [
   openAiCompatible("doubao-ark", "doubao", process.env.DOUBAO_API_KEY, process.env.DOUBAO_API_BASE || "https://ark.cn-beijing.volces.com/api/v3", process.env.DOUBAO_PROBE_MODEL),
@@ -150,7 +151,7 @@ async function runProvider(connector, mode = "standard") {
 
 async function runCycle(mode = "standard", onlyId = null) {
   if (!ingestKey) throw new Error("api_monitor_key_unconfigured");
-  const selected = providers.filter((provider) => (providerAllowlist.size === 0 || providerAllowlist.has(provider.id)) && (!onlyId || provider.id === onlyId) && (mode !== "inference" || provider.supportsInference));
+  const selected = providers.filter((provider) => providerAllowed(provider.id) && (!onlyId || provider.id === onlyId) && (mode !== "inference" || provider.supportsInference));
   const results = await Promise.allSettled(selected.map((provider) => runProvider(provider, mode)));
   const failed = results.filter((result) => result.status === "rejected").length;
   console.log(JSON.stringify({ event: "api_monitor.cycle", mode, providers: selected.length, failed, at: new Date().toISOString() }));
@@ -162,6 +163,7 @@ async function pollJobs() {
   if (!response.ok) return;
   const body = await response.json().catch(() => ({}));
   for (const job of body.data || []) {
+    if (!providerAllowed(job.connectorId)) continue;
     const claim = await fetch(`${catalogUrl}/api/ingest/v1/api-provider-probes/jobs/${encodeURIComponent(job.id)}/claim`, { method: "POST", headers: { Authorization: `Bearer ${ingestKey}` } });
     if (claim.ok) await runCycle(job.mode === "inference" ? "inference" : "standard", job.connectorId).catch(() => {});
   }
