@@ -45,6 +45,7 @@ describe("API provider monitoring", () => {
     expect(body.data.every((item) => item.officialLinks.subscriptionUrl.startsWith("https://") && item.officialLinks.documentationUrl.startsWith("https://"))).toBe(true);
     expect(body.data.find((item) => item.id === "minimax-coding-plan")?.officialLinks.subscriptionUrl).toBe("https://platform.minimaxi.com/console/plan");
     expect(body.data.find((item) => item.id === "openai")?.officialLinks.documentationUrl).toBe("https://developers.openai.com/api/docs/quickstart");
+    expect(body.data.every((item) => "credentialExpiry" in item && "modelCatalog" in item && "modelCount" in item)).toBe(true);
     expect(text).not.toMatch(/api.?key|password|secret/i);
   });
 
@@ -81,6 +82,7 @@ describe("API provider monitoring", () => {
           latencyMs: 42,
           model: "MiniMax-M2.5",
           modelCount: 3,
+          modelCatalog: ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.5"],
         },
       ],
     };
@@ -118,7 +120,10 @@ describe("API provider monitoring", () => {
     await waitOnExecutionContext(readCtx);
     expect(read.status).toBe(200);
     const text = await read.text();
-    expect(text).toContain("MiniMax-M2.5");
+    const detail = JSON.parse(text) as { data: { modelCatalog: string[]; modelCount: number; credentialExpiry: { status: string } } };
+    expect(detail.data.modelCatalog).toEqual(["MiniMax-M2.7", "MiniMax-M2.5"]);
+    expect(detail.data.modelCount).toBe(3);
+    expect(detail.data.credentialExpiry.status).toBe("unknown");
     expect(text).not.toContain(key);
   });
 

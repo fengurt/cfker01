@@ -57,6 +57,8 @@ export async function listApiProviders(env: Env): Promise<Record<string, unknown
     SELECT c.*,
       (SELECT latency_ms FROM api_provider_probe_events e WHERE e.connector_id=c.id ORDER BY e.observed_at DESC LIMIT 1) latency_ms,
       (SELECT model FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model,
+      (SELECT model_count FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model_count IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_count,
+      (SELECT model_catalog_json FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model_catalog_json IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_catalog_json,
       (SELECT quota_summary FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.quota_summary IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) quota_summary,
       (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='auth' ORDER BY e.observed_at DESC LIMIT 1) auth_status,
       (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='models' ORDER BY e.observed_at DESC LIMIT 1) models_status,
@@ -69,10 +71,23 @@ export async function listApiProviders(env: Env): Promise<Record<string, unknown
 }
 
 export async function getApiProvider(env: Env, id: string): Promise<Record<string, unknown> | null> {
-  const row = await env.MGMT_DB.prepare(`SELECT * FROM api_provider_connectors WHERE id=?1`).bind(id).first<Record<string, unknown>>();
+  const row = await env.MGMT_DB.prepare(`
+    SELECT c.*,
+      (SELECT latency_ms FROM api_provider_probe_events e WHERE e.connector_id=c.id ORDER BY e.observed_at DESC LIMIT 1) latency_ms,
+      (SELECT model FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model,
+      (SELECT model_count FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model_count IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_count,
+      (SELECT model_catalog_json FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model_catalog_json IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_catalog_json,
+      (SELECT quota_summary FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.quota_summary IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) quota_summary,
+      (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='auth' ORDER BY e.observed_at DESC LIMIT 1) auth_status,
+      (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='models' ORDER BY e.observed_at DESC LIMIT 1) models_status,
+      (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='quota' ORDER BY e.observed_at DESC LIMIT 1) quota_status,
+      (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='inference' ORDER BY e.observed_at DESC LIMIT 1) inference_status,
+      (SELECT observed_at FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='inference' ORDER BY e.observed_at DESC LIMIT 1) inference_observed_at
+    FROM api_provider_connectors c WHERE c.id=?1
+  `).bind(id).first<Record<string, unknown>>();
   if (!row) return null;
   const events = await env.MGMT_DB.prepare(`
-    SELECT probe_kind,status,http_status,latency_ms,model,model_count,quota_summary,error_code,observed_at
+    SELECT probe_kind,status,http_status,latency_ms,model,model_count,model_catalog_json,quota_summary,error_code,observed_at
     FROM api_provider_probe_events e
     WHERE connector_id=?1 AND observed_at=(
       SELECT MAX(e2.observed_at) FROM api_provider_probe_events e2
@@ -86,7 +101,7 @@ export async function getApiProvider(env: Env, id: string): Promise<Record<strin
 }
 
 export async function getApiProviderHistory(env: Env, id: string, limit = 100): Promise<Record<string, unknown>[]> {
-  const events = await env.MGMT_DB.prepare(`SELECT probe_kind,status,http_status,latency_ms,model,model_count,quota_summary,error_code,observed_at FROM api_provider_probe_events WHERE connector_id=?1 ORDER BY observed_at DESC LIMIT ?2`).bind(id, Math.min(500, Math.max(1, limit))).all<Record<string, unknown>>();
+  const events = await env.MGMT_DB.prepare(`SELECT probe_kind,status,http_status,latency_ms,model,model_count,model_catalog_json,quota_summary,error_code,observed_at FROM api_provider_probe_events WHERE connector_id=?1 ORDER BY observed_at DESC LIMIT ?2`).bind(id, Math.min(500, Math.max(1, limit))).all<Record<string, unknown>>();
   return (events.results ?? []).map(serializeEvent);
 }
 
@@ -119,7 +134,10 @@ export async function ingestApiProviderProbe(env: Env, input: Record<string, unk
     if (!raw || typeof raw !== "object" || containsSecretShapedField(raw)) return { error: "secret_field_rejected" };
     const check = raw as Record<string, unknown>, kind = clean(check.kind, 30), status = statusValue(check.status);
     if (!kind || !CHECK_KINDS.has(kind)) return { error: "invalid_check_kind" };
-    normalizedChecks.push({ kind, status, httpStatus: boundedNumber(check.httpStatus, 100, 599), latencyMs: boundedNumber(check.latencyMs, 0, 600_000), model: clean(check.model, 200), modelCount: boundedNumber(check.modelCount, 0, 100_000), quotaSummary: clean(check.quotaSummary, 500), errorCode: clean(check.errorCode, 100) });
+    const modelCatalog = Array.isArray(check.modelCatalog)
+      ? [...new Set(check.modelCatalog.map((item) => clean(item, 200)).filter((item): item is string => Boolean(item)))].slice(0, 500)
+      : [];
+    normalizedChecks.push({ kind, status, httpStatus: boundedNumber(check.httpStatus, 100, 599), latencyMs: boundedNumber(check.latencyMs, 0, 600_000), model: clean(check.model, 200), modelCount: boundedNumber(check.modelCount, 0, 100_000), modelCatalog, quotaSummary: clean(check.quotaSummary, 500), errorCode: clean(check.errorCode, 100) });
   }
   const failure = normalizedChecks.some((check) => check.status === "down"), previousFailures = Number(connector.consecutive_failures ?? 0);
   const immediate = normalizedChecks.some((check) => [401, 403].includes(Number(check.httpStatus)));
@@ -131,9 +149,11 @@ export async function ingestApiProviderProbe(env: Env, input: Record<string, unk
   const statements: D1PreparedStatement[] = [
     env.MGMT_DB.prepare(`INSERT INTO api_provider_probe_runs(id,connector_id,run_id,mode,credential_status,overall_status,observed_at,request_id,error_code,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`).bind(id, connectorId, runId, mode, credentialStatus, overallStatus, observedAt, requestId, clean(input.errorCode, 100), now),
   ];
-  for (const check of normalizedChecks) statements.push(env.MGMT_DB.prepare(`INSERT INTO api_provider_probe_events(id,probe_run_id,connector_id,probe_kind,status,http_status,latency_ms,model,model_count,quota_summary,error_code,observed_at,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)`).bind(crypto.randomUUID(), id, connectorId, check.kind, check.status, check.httpStatus, check.latencyMs, check.model, check.modelCount, check.quotaSummary, check.errorCode, observedAt, now));
+  for (const check of normalizedChecks) statements.push(env.MGMT_DB.prepare(`INSERT INTO api_provider_probe_events(id,probe_run_id,connector_id,probe_kind,status,http_status,latency_ms,model,model_count,model_catalog_json,quota_summary,error_code,observed_at,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)`).bind(crypto.randomUUID(), id, connectorId, check.kind, check.status, check.httpStatus, check.latencyMs, check.model, check.modelCount, Array.isArray(check.modelCatalog) && check.modelCatalog.length ? JSON.stringify(check.modelCatalog) : null, check.quotaSummary, check.errorCode, observedAt, now));
   const nextDueAt = new Date(Date.parse(observedAt) + 4 * 60 * 60 * 1000).toISOString(), staleAt = new Date(Date.parse(observedAt) + 6 * 60 * 60 * 1000).toISOString();
-  statements.push(env.MGMT_DB.prepare(`UPDATE api_provider_connectors SET credential_status=?1,overall_status=?2,last_checked_at=?3,last_success_at=CASE WHEN ?2='healthy' THEN ?3 ELSE last_success_at END,last_inference_at=CASE WHEN ?4='inference' THEN ?3 ELSE last_inference_at END,next_due_at=?5,stale_at=?6,consecutive_failures=?7,last_error_code=?8,updated_at=?9 WHERE id=?10`).bind(credentialStatus, overallStatus, observedAt, mode, nextDueAt, staleAt, consecutiveFailures, clean(input.errorCode, 100), now, connectorId));
+  const credentialExpiresAt = optionalIso(input.credentialExpiresAt), credentialExpirySource = credentialExpiresAt ? clean(input.credentialExpirySource, 50) : null;
+  const subscriptionExpiresAt = optionalIso(input.subscriptionExpiresAt), subscriptionExpirySource = subscriptionExpiresAt ? clean(input.subscriptionExpirySource, 50) : null, quotaResetsAt = optionalIso(input.quotaResetsAt);
+  statements.push(env.MGMT_DB.prepare(`UPDATE api_provider_connectors SET credential_status=?1,overall_status=?2,last_checked_at=?3,last_success_at=CASE WHEN ?2='healthy' THEN ?3 ELSE last_success_at END,last_inference_at=CASE WHEN ?4='inference' THEN ?3 ELSE last_inference_at END,next_due_at=?5,stale_at=?6,consecutive_failures=?7,last_error_code=?8,credential_expires_at=COALESCE(?9,credential_expires_at),credential_expiry_source=COALESCE(?10,credential_expiry_source),subscription_expires_at=COALESCE(?11,subscription_expires_at),subscription_expiry_source=COALESCE(?12,subscription_expiry_source),quota_resets_at=COALESCE(?13,quota_resets_at),updated_at=?14 WHERE id=?15`).bind(credentialStatus, overallStatus, observedAt, mode, nextDueAt, staleAt, consecutiveFailures, clean(input.errorCode, 100), credentialExpiresAt, credentialExpirySource, subscriptionExpiresAt, subscriptionExpirySource, quotaResetsAt, now, connectorId));
   statements.push(env.MGMT_DB.prepare(`UPDATE api_provider_probe_jobs SET status='completed',completed_at=?1,updated_at=?1 WHERE connector_id=?2 AND mode=?3 AND status='claimed'`).bind(now, connectorId, mode));
   await env.MGMT_DB.batch(statements);
   return { data: { id, connectorId, runId, overallStatus, observedAt } };
@@ -151,12 +171,15 @@ function serializeConnector(row: Record<string, unknown>): Record<string, unknow
           : recordedInferenceStatus;
   const defaultCheck = row.credential_status === "unconfigured" ? "unconfigured" : "unknown";
   const officialLinks = API_PROVIDER_OFFICIAL_LINKS[String(row.id) as ApiProviderId] ?? null;
-  return { id: row.id, provider: row.provider, accountLabel: row.account_label, credentialType: row.credential_kind, enabled: Boolean(row.enabled), credentialStatus: row.credential_status, overallStatus, checks: { auth: row.auth_status ?? defaultCheck, models: row.models_status ?? defaultCheck, quota: row.quota_status ?? defaultCheck, inference: row.credential_kind === "subscription" ? "not_applicable" : inferenceStatus }, inferenceStatus, latencyMs: row.latency_ms == null ? null : Number(row.latency_ms), model: row.model ?? null, quotaSummary: row.quota_summary ?? null, lastCheckedAt: row.last_checked_at ?? null, lastInferenceAt: row.last_inference_at ?? null, nextDueAt: row.next_due_at ?? null, staleAt: row.stale_at ?? null, errorCode: row.last_error_code ?? null, officialLinks };
+  const credentialExpiresAt = row.credential_expires_at ?? null, subscriptionExpiresAt = row.subscription_expires_at ?? null, quotaResetsAt = row.quota_resets_at ?? null, modelCatalog = parseStringArray(row.model_catalog_json);
+  return { id: row.id, provider: row.provider, accountLabel: row.account_label, credentialType: row.credential_kind, enabled: Boolean(row.enabled), credentialStatus: row.credential_status, validity: { credential: { status: credentialExpiresAt ? "known" : "unknown", expiresAt: credentialExpiresAt, source: row.credential_expiry_source ?? null }, subscription: { status: subscriptionExpiresAt ? "known" : "unknown", expiresAt: subscriptionExpiresAt, source: row.subscription_expiry_source ?? null }, quota: { resetsAt: quotaResetsAt } }, credentialExpiry: { status: credentialExpiresAt ? "known" : "unknown", expiresAt: credentialExpiresAt, source: row.credential_expiry_source ?? null }, overallStatus, checks: { auth: row.auth_status ?? defaultCheck, models: row.models_status ?? defaultCheck, quota: row.quota_status ?? defaultCheck, inference: row.credential_kind === "subscription" ? "not_applicable" : inferenceStatus }, inferenceStatus, latencyMs: row.latency_ms == null ? null : Number(row.latency_ms), model: row.model ?? null, modelCatalog, modelCount: row.model_count == null ? modelCatalog.length : Number(row.model_count), quotaSummary: row.quota_summary ?? null, lastCheckedAt: row.last_checked_at ?? null, lastInferenceAt: row.last_inference_at ?? null, nextDueAt: row.next_due_at ?? null, staleAt: row.stale_at ?? null, errorCode: row.last_error_code ?? null, officialLinks };
 }
 
 function serializeEvent(row: Record<string, unknown>): Record<string, unknown> {
-  return { kind: row.probe_kind, status: row.status, httpStatus: row.http_status == null ? null : Number(row.http_status), latencyMs: row.latency_ms == null ? null : Number(row.latency_ms), model: row.model ?? null, modelCount: row.model_count == null ? null : Number(row.model_count), quotaSummary: row.quota_summary ?? null, errorCode: row.error_code ?? null, observedAt: row.observed_at };
+  return { kind: row.probe_kind, status: row.status, httpStatus: row.http_status == null ? null : Number(row.http_status), latencyMs: row.latency_ms == null ? null : Number(row.latency_ms), model: row.model ?? null, modelCount: row.model_count == null ? null : Number(row.model_count), modelCatalog: parseStringArray(row.model_catalog_json), quotaSummary: row.quota_summary ?? null, errorCode: row.error_code ?? null, observedAt: row.observed_at };
 }
 function clean(value: unknown, max: number): string | null { const text = String(value ?? "").trim(); return text ? text.slice(0, max) : null; }
+function optionalIso(value: unknown): string | null { const text = clean(value, 50); return text && !Number.isNaN(Date.parse(text)) ? new Date(text).toISOString() : null; }
+function parseStringArray(value: unknown): string[] { try { const parsed = JSON.parse(String(value ?? "[]")); return Array.isArray(parsed) ? parsed.map(String).slice(0, 500) : []; } catch { return []; } }
 function boundedNumber(value: unknown, min: number, max: number): number | null { const n = Number(value); return Number.isFinite(n) && n >= min && n <= max ? Math.round(n) : null; }
 function statusValue(value: unknown): ApiProviderStatus { const status = String(value ?? "unknown") as ApiProviderStatus; return STATUS_VALUES.has(status) ? status : "unknown"; }

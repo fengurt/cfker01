@@ -102,6 +102,9 @@ const translations = {
     connectors: "连接器",
     subscribeOfficial: "订阅 / 充值",
     officialDocs: "官方文档",
+    availableModels: "可用模型",
+    keyExpiryUnknown: "Key 到期：供应商未提供查询接口",
+    keyExpires: "Key 到期",
   },
   en: {
     skip: "Skip to admin",
@@ -206,6 +209,9 @@ const translations = {
     connectors: "Connectors",
     subscribeOfficial: "Subscribe / billing",
     officialDocs: "Official docs",
+    availableModels: "Available models",
+    keyExpiryUnknown: "Key expiry: not exposed by provider",
+    keyExpires: "Key expires",
   },
 };
 Object.assign(translations["zh-CN"], {
@@ -1819,15 +1825,20 @@ async function loadApiProviders() {
     $("#server-api-issues").textContent = problem;
     target.replaceChildren();
     for (const provider of providers) {
-      const row = document.createElement("article"), identity = document.createElement("div"), name = document.createElement("strong"), meta = document.createElement("small"), links = document.createElement("nav"), checks = document.createElement("div"), timing = document.createElement("small"), action = document.createElement("button");
+      const row = document.createElement("article"), identity = document.createElement("div"), name = document.createElement("strong"), meta = document.createElement("small"), links = document.createElement("nav"), models = document.createElement("details"), modelSummary = document.createElement("summary"), modelList = document.createElement("div"), checks = document.createElement("div"), timing = document.createElement("small"), action = document.createElement("button");
       row.className = "api-provider-row"; row.dataset.status = provider.overallStatus;
       name.textContent = provider.accountLabel; meta.textContent = `${provider.provider} · ${provider.credentialType}`;
       links.className = "api-provider-links"; links.setAttribute("aria-label", locale === "zh-CN" ? `${provider.accountLabel} 官方入口` : `${provider.accountLabel} official resources`);
       if (provider.officialLinks?.subscriptionUrl) links.append(externalLink(t("subscribeOfficial"), provider.officialLinks.subscriptionUrl, "api-provider-link"));
       if (provider.officialLinks?.documentationUrl) links.append(externalLink(t("officialDocs"), provider.officialLinks.documentationUrl, "api-provider-link"));
-      identity.append(name, meta, links);
+      models.className = "api-provider-models"; modelList.className = "api-provider-model-list";
+      modelSummary.textContent = `${t("availableModels")} ${Number(provider.modelCount || 0)}`;
+      for (const modelId of provider.modelCatalog || []) { const code = document.createElement("code"); code.textContent = modelId; modelList.append(code); }
+      if ((provider.modelCatalog || []).length) models.append(modelSummary, modelList);
+      identity.append(name, meta, links, models);
       checks.className = "api-provider-checks"; checks.append(statusBadge(provider.overallStatus), textCell(provider.model || t("noModel")), textCell(provider.latencyMs == null ? "—" : `${provider.latencyMs} ms`));
-      timing.textContent = provider.lastCheckedAt ? `${t("checked")} ${formatDateTime(provider.lastCheckedAt)} · ${t("nextCheck")} ${formatDateTime(provider.nextDueAt)}` : t("notChecked");
+      const expiry = provider.validity?.credential?.expiresAt ? `${t("keyExpires")} ${formatDate(provider.validity.credential.expiresAt)}` : t("keyExpiryUnknown");
+      timing.textContent = provider.lastCheckedAt ? `${t("checked")} ${formatDateTime(provider.lastCheckedAt)} · ${t("nextCheck")} ${formatDateTime(provider.nextDueAt)} · ${expiry}` : `${t("notChecked")} · ${expiry}`;
       action.type = "button"; action.dataset.providerProbe = provider.id; action.textContent = locale === "zh-CN" ? "立即检查" : "Check now";
       row.append(identity, checks, timing, action); target.append(row);
     }
