@@ -1,3 +1,5 @@
+import { rankProbeModels, selectProbeModel } from "./lib/api-model-selection.mjs";
+
 const catalogUrl = process.env.CATALOG_INTERNAL_URL || "http://catalog:8787";
 const ingestKey = process.env.API_MONITOR_KEY || "";
 const standardIntervalMs = Number(process.env.API_PROBE_INTERVAL_MS || 4 * 60 * 60 * 1000);
@@ -6,30 +8,49 @@ const timeoutMs = Number(process.env.API_PROBE_TIMEOUT_MS || 15000);
 
 const providers = [
   openAiCompatible("doubao-ark", "doubao", process.env.DOUBAO_API_KEY, process.env.DOUBAO_API_BASE || "https://ark.cn-beijing.volces.com/api/v3", process.env.DOUBAO_PROBE_MODEL),
-  openAiCompatible("minimax-api", "minimax", process.env.MINIMAX_API_KEY, process.env.MINIMAX_API_BASE || "https://api.minimax.io/v1", process.env.MINIMAX_PROBE_MODEL),
+  openAiCompatible("minimax-api", "minimax", process.env.MINIMAX_API_KEY, process.env.MINIMAX_API_BASE || "https://api.minimaxi.com/v1", process.env.MINIMAX_PROBE_MODEL),
   subscriptionConnector(),
-  openAiCompatible("openai", "openai", process.env.OPENAI_API_KEY, "https://api.openai.com/v1", process.env.OPENAI_PROBE_MODEL),
-  openAiCompatible("perplexity", "perplexity", process.env.PERPLEXITY_API_KEY, "https://api.perplexity.ai", process.env.PERPLEXITY_PROBE_MODEL),
+  openAiCompatible("openai", "openai", process.env.OPENAI_API_KEY, "https://api.openai.com/v1", process.env.OPENAI_PROBE_MODEL, "responses"),
+  perplexityConnector(),
   openAiCompatible("moonshot", "moonshot", process.env.MOONSHOT_API_KEY, "https://api.moonshot.cn/v1", process.env.MOONSHOT_PROBE_MODEL),
   geminiConnector(),
 ];
 
-function openAiCompatible(id, provider, key, baseUrl, configuredModel) {
+function openAiCompatible(id, provider, key, baseUrl, configuredModel, inferenceApi = "chat") {
+  let selectedModel = null;
+  let candidateModels = [];
   return {
-    id, provider, configured: Boolean(key), model: configuredModel || "", supportsInference: Boolean(configuredModel),
+    id, provider, configured: Boolean(key), get model() { return selectedModel || ""; }, get supportsInference() { return Boolean(selectedModel); },
     async standard() {
       if (!key) return unconfigured();
       return requestCheck("models", `${baseUrl}/models`, { headers: { Authorization: `Bearer ${key}` } }, async (response) => {
         const data = await response.json().catch(() => ({}));
         const models = Array.isArray(data?.data) ? data.data.map((item) => String(item?.id || "")).filter(Boolean) : [];
-        const model = configuredModel && models.includes(configuredModel) ? configuredModel : (configuredModel || models[0] || null);
-        return { model, modelCount: models.length };
+        candidateModels = rankProbeModels(provider, models, configuredModel);
+        selectedModel = candidateModels[0] || null;
+        return selectedModel
+          ? { model: selectedModel, modelCount: models.length }
+          : { status: "degraded", model: null, modelCount: models.length, errorCode: configuredModel ? "probe_model_unavailable" : "no_compatible_model" };
       });
     },
     async inference() {
       if (!key) return unconfigured("inference");
-      if (!configuredModel) return skipped("inference", "probe_model_unconfigured");
-      return requestCheck("inference", `${baseUrl}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: configuredModel, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }) }, () => ({ model: configuredModel }));
+      if (!selectedModel) return skipped("inference", "probe_model_unavailable");
+      let lastCheck = skipped("inference", "probe_model_unavailable");
+      for (const model of candidateModels.slice(0, 8)) {
+        const responsesApi = inferenceApi === "responses";
+        const check = await requestCheck("inference", `${baseUrl}/${responsesApi ? "responses" : "chat/completions"}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify(responsesApi
+            ? { model, input: "ping", max_output_tokens: 16 }
+            : { model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
+        }, () => ({ model }));
+        lastCheck = { ...check, model };
+        if (check.status === "healthy") { selectedModel = model; return lastCheck; }
+        if (check.httpStatus !== 404) return lastCheck;
+      }
+      return lastCheck;
     },
   };
 }
@@ -50,22 +71,44 @@ function subscriptionConnector() {
   };
 }
 
-function geminiConnector() {
-  const key = process.env.GEMINI_API_KEY, model = process.env.GEMINI_PROBE_MODEL || "";
+function perplexityConnector() {
+  const key = process.env.PERPLEXITY_API_KEY;
+  const model = process.env.PERPLEXITY_PROBE_MODEL || "sonar-pro";
+  const url = "https://api.perplexity.ai/v1/sonar";
+  const request = (kind) => requestCheck(kind, url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model, max_tokens: 1, disable_search: true, messages: [{ role: "user", content: "ping" }] }),
+  }, () => ({ model }));
   return {
-    id: "gemini", provider: "gemini", configured: Boolean(key), model, supportsInference: Boolean(model),
+    id: "perplexity", provider: "perplexity", configured: Boolean(key), model, supportsInference: Boolean(key),
+    async standard() { return key ? request("auth") : unconfigured("auth"); },
+    async inference() { return key ? request("inference") : unconfigured("inference"); },
+  };
+}
+
+function geminiConnector() {
+  const key = process.env.GEMINI_API_KEY, configuredModel = process.env.GEMINI_PROBE_MODEL || "";
+  let selectedModel = null;
+  return {
+    id: "gemini", provider: "gemini", configured: Boolean(key), get model() { return selectedModel || ""; }, get supportsInference() { return Boolean(selectedModel); },
     async standard() {
       if (!key) return unconfigured();
       return requestCheck("models", "https://generativelanguage.googleapis.com/v1beta/models", { headers: { "x-goog-api-key": key } }, async (response) => {
         const data = await response.json().catch(() => ({}));
-        const models = Array.isArray(data?.models) ? data.models.map((item) => String(item?.name || "").replace(/^models\//, "")).filter(Boolean) : [];
-        return { model: model && models.includes(model) ? model : (model || models[0] || null), modelCount: models.length };
+        const models = Array.isArray(data?.models) ? data.models
+          .filter((item) => !Array.isArray(item?.supportedGenerationMethods) || item.supportedGenerationMethods.includes("generateContent"))
+          .map((item) => String(item?.name || "").replace(/^models\//, "")).filter(Boolean) : [];
+        selectedModel = selectProbeModel("gemini", models, configuredModel);
+        return selectedModel
+          ? { model: selectedModel, modelCount: models.length }
+          : { status: "degraded", model: null, modelCount: models.length, errorCode: configuredModel ? "probe_model_unavailable" : "no_compatible_model" };
       });
     },
     async inference() {
       if (!key) return unconfigured("inference");
-      if (!model) return skipped("inference", "probe_model_unconfigured");
-      return requestCheck("inference", `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: "POST", headers: { "x-goog-api-key": key, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: "ping" }] }], generationConfig: { maxOutputTokens: 1 } }) }, () => ({ model }));
+      if (!selectedModel) return skipped("inference", "probe_model_unavailable");
+      return requestCheck("inference", `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(selectedModel)}:generateContent`, { method: "POST", headers: { "x-goog-api-key": key, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: "ping" }] }], generationConfig: { maxOutputTokens: 1 } }) }, () => ({ model: selectedModel }));
     },
   };
 }
@@ -119,13 +162,13 @@ async function pollJobs() {
   }
 }
 
-let lastInference = 0;
 async function tick() {
   await pollJobs().catch(() => {});
   await runCycle("standard").catch((error) => console.error(JSON.stringify({ event: "api_monitor.failed", code: String(error?.message || "failed").slice(0, 80) })));
-  if (Date.now() - lastInference >= inferenceIntervalMs) { lastInference = Date.now(); await runCycle("inference").catch(() => {}); }
 }
 
 await tick();
+await runCycle("inference").catch(() => {});
 setInterval(() => { tick().catch(() => {}); }, standardIntervalMs);
+setInterval(() => { runCycle("inference").catch(() => {}); }, inferenceIntervalMs);
 setInterval(() => { pollJobs().catch(() => {}); }, 60_000);
