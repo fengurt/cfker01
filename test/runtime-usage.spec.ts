@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import { aggregateRuntimeProjects } from "../src/lib/runtime-usage";
 // @ts-ignore The production scanner is intentionally authored as a Node ESM module.
 import { cliStats, dockerApiStats, parseDockerBytes } from "../scripts/lib/docker-runtime-metrics.mjs";
+import scannerDockerfile from "../Dockerfile.sync?raw";
 
 describe("runtime project usage", () => {
+  it("packages every runtime scanner import into the production image", () => {
+    expect(scannerDockerfile).toContain("scripts/lib/docker-runtime-metrics.mjs");
+    expect(scannerDockerfile).toContain("scripts/lib/dns-probe.mjs");
+  });
   it("normalizes Docker CLI units without inventing missing values", () => {
     expect(parseDockerBytes("1.5 GiB")).toBe(1610612736);
     expect(cliStats({ cpu: "12.5%", memory: "512MiB / 2GiB", memoryPercent: "25%", network: "1GB / 250MB", block: "10MB / 3MB", pids: "8", sampledAt: "2026-08-12T00:00:00Z" })).toMatchObject({

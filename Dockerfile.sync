@@ -26,7 +26,7 @@ RUN sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/discover-assets.mjs scripts/scanner-loop.mjs scripts/sync-loop.sh ./scripts/
-COPY scripts/lib/dns-probe.mjs ./scripts/lib/dns-probe.mjs
+COPY scripts/lib/dns-probe.mjs scripts/lib/docker-runtime-metrics.mjs ./scripts/lib/
 COPY config/discovery.json ./config/discovery.json
 COPY src/generated/local-projects.json ./src/generated/local-projects.json
 RUN mkdir -p /data/assets \
