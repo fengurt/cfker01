@@ -1,5 +1,6 @@
 FROM node:22-alpine
 WORKDIR /app
 COPY scripts/api-monitor.mjs ./api-monitor.mjs
+COPY scripts/lib/api-model-selection.mjs ./lib/api-model-selection.mjs
 USER node
 CMD ["node", "api-monitor.mjs"]
