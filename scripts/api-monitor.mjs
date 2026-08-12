@@ -12,6 +12,21 @@ const inferenceTimeoutMs = Number(process.env.API_INFERENCE_TIMEOUT_MS || 45000)
 const oneShot = process.env.API_MONITOR_ONCE === "1";
 const providerAllowlist = new Set(String(process.env.API_MONITOR_PROVIDER_ALLOWLIST || "").split(",").map((value) => value.trim()).filter(Boolean));
 const providerAllowed = (id) => providerAllowlist.size === 0 || providerAllowlist.has(id);
+const credentialExpiry = (id) => {
+  const envName = `${id.replaceAll("-", "_").toUpperCase()}_CREDENTIAL_EXPIRES_AT`;
+  const value = String(process.env[envName] || "").trim();
+  return value && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : null;
+};
+const configuredDate = (id, suffix) => {
+  const envName = `${id.replaceAll("-", "_").toUpperCase()}_${suffix}`;
+  const value = String(process.env[envName] || "").trim();
+  return value && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : null;
+};
+const validityMetadata = (id) => ({
+  credentialExpiresAt: credentialExpiry(id),
+  subscriptionExpiresAt: configuredDate(id, "SUBSCRIPTION_EXPIRES_AT"),
+  quotaResetsAt: configuredDate(id, "QUOTA_RESETS_AT"),
+});
 
 const providers = [
   openAiCompatible("doubao-ark", "doubao", process.env.DOUBAO_API_KEY, process.env.DOUBAO_API_BASE || "https://ark.cn-beijing.volces.com/api/v3", process.env.DOUBAO_PROBE_MODEL),
@@ -27,7 +42,7 @@ function openAiCompatible(id, provider, key, baseUrl, configuredModel, inference
   let selectedModel = null;
   let candidateModels = [];
   return {
-    id, provider, configured: Boolean(key), get model() { return selectedModel || ""; }, get supportsInference() { return Boolean(selectedModel); },
+    id, provider, configured: Boolean(key), ...validityMetadata(id), get model() { return selectedModel || ""; }, get supportsInference() { return Boolean(selectedModel); },
     async standard() {
       if (!key) return unconfigured();
       return requestCheck("models", `${baseUrl}/models`, { headers: { Authorization: `Bearer ${key}` } }, async (response) => {
@@ -36,7 +51,7 @@ function openAiCompatible(id, provider, key, baseUrl, configuredModel, inference
         candidateModels = rankProbeModels(provider, models, configuredModel);
         selectedModel = candidateModels[0] || null;
         return selectedModel
-          ? { model: selectedModel, modelCount: models.length }
+          ? { model: selectedModel, modelCount: models.length, modelCatalog: models.slice(0, 500) }
           : { status: "degraded", model: null, modelCount: models.length, errorCode: configuredModel ? "probe_model_unavailable" : "no_compatible_model" };
       });
     },
@@ -65,14 +80,22 @@ function openAiCompatible(id, provider, key, baseUrl, configuredModel, inference
 function subscriptionConnector() {
   const key = process.env.MINIMAX_SUBSCRIPTION_KEY;
   return {
-    id: "minimax-coding-plan", provider: "minimax", configured: Boolean(key), model: "", supportsInference: false,
+    id: "minimax-coding-plan", provider: "minimax", configured: Boolean(key), ...validityMetadata("minimax-coding-plan"), model: "", supportsInference: false,
     async standard() {
       if (!key) return unconfigured("quota");
-      return requestCheck("quota", process.env.MINIMAX_SUBSCRIPTION_URL || "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains", { headers: { Authorization: `Bearer ${key}` } }, async (response) => {
-        const data = await response.json().catch(() => ({}));
-        const remaining = finite(data?.data?.current_remain ?? data?.current_remain);
-        return { quotaSummary: remaining == null ? "available" : `remaining:${Math.max(0, Math.round(remaining))}` };
-      });
+      const [quota, catalog] = await Promise.all([
+        requestCheck("quota", process.env.MINIMAX_SUBSCRIPTION_URL || "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains", { headers: { Authorization: `Bearer ${key}` } }, async (response) => {
+          const data = await response.json().catch(() => ({}));
+          const remaining = finite(data?.data?.current_remain ?? data?.current_remain);
+          return { quotaSummary: remaining == null ? "available" : `remaining:${Math.max(0, Math.round(remaining))}` };
+        }),
+        requestCheck("models", "https://api.minimaxi.com/v1/models", { headers: { Authorization: `Bearer ${key}` } }, async (response) => {
+          const data = await response.json().catch(() => ({}));
+          const models = Array.isArray(data?.data) ? data.data.map((item) => String(item?.id || "")).filter(Boolean) : [];
+          return { model: models[0] || null, modelCount: models.length, modelCatalog: models.slice(0, 500) };
+        }),
+      ]);
+      return { ...quota, additionalChecks: [catalog] };
     },
     async inference() { return skipped("inference", "subscription_credential_not_used_for_inference"); },
   };
@@ -91,8 +114,19 @@ function perplexityConnector() {
     model,
   });
   return {
-    id: "perplexity", provider: "perplexity", configured: Boolean(key), model, supportsInference: Boolean(key),
-    async standard() { return key ? request("auth") : unconfigured("auth"); },
+    id: "perplexity", provider: "perplexity", configured: Boolean(key), ...validityMetadata("perplexity"), model, supportsInference: Boolean(key),
+    async standard() {
+      if (!key) return unconfigured("auth");
+      const [auth, catalog] = await Promise.all([
+        request("auth"),
+        requestCheck("models", "https://api.perplexity.ai/v1/models", {}, async (response) => {
+          const data = await response.json().catch(() => ({}));
+          const models = Array.isArray(data?.data) ? data.data.map((item) => String(item?.id || "")).filter(Boolean) : [];
+          return { model, modelCount: models.length, modelCatalog: models.slice(0, 500) };
+        }),
+      ]);
+      return { ...auth, additionalChecks: [catalog] };
+    },
     async inference() { return key ? request("inference") : unconfigured("inference"); },
   };
 }
@@ -101,7 +135,7 @@ function geminiConnector() {
   const key = process.env.GEMINI_API_KEY, configuredModel = process.env.GEMINI_PROBE_MODEL || "";
   let selectedModel = null;
   return {
-    id: "gemini", provider: "gemini", configured: Boolean(key), get model() { return selectedModel || ""; }, get supportsInference() { return Boolean(selectedModel); },
+    id: "gemini", provider: "gemini", configured: Boolean(key), ...validityMetadata("gemini"), get model() { return selectedModel || ""; }, get supportsInference() { return Boolean(selectedModel); },
     async standard() {
       if (!key) return unconfigured();
       return requestCheck("models", "https://generativelanguage.googleapis.com/v1beta/models", { headers: { "x-goog-api-key": key } }, async (response) => {
@@ -111,7 +145,7 @@ function geminiConnector() {
           .map((item) => String(item?.name || "").replace(/^models\//, "")).filter(Boolean) : [];
         selectedModel = selectProbeModel("gemini", models, configuredModel);
         return selectedModel
-          ? { model: selectedModel, modelCount: models.length }
+          ? { model: selectedModel, modelCount: models.length, modelCatalog: models.slice(0, 500) }
           : { status: "degraded", model: null, modelCount: models.length, errorCode: configuredModel ? "probe_model_unavailable" : "no_compatible_model" };
       });
     },
@@ -141,13 +175,14 @@ function errorForHttp(status) { return status === 401 ? "unauthorized" : status 
 function finite(value) { const number = Number(value); return Number.isFinite(number) ? number : null; }
 
 async function runProvider(connector, mode = "standard") {
-  const check = mode === "inference" ? await connector.inference() : await connector.standard();
+  const rawCheck = mode === "inference" ? await connector.inference() : await connector.standard();
+  const { additionalChecks = [], ...check } = rawCheck;
   const credentialStatus = connector.configured ? (check.httpStatus === 401 || check.httpStatus === 403 ? "error" : "configured") : "unconfigured";
   const overallStatus = check.status;
   const checks = mode === "standard" && ["models", "quota"].includes(check.kind)
-    ? [{ ...check, kind: "auth", model: null, modelCount: null, quotaSummary: null }, check]
-    : [check];
-  const payload = { runId: crypto.randomUUID(), connectorId: connector.id, mode, credentialStatus, overallStatus, observedAt: new Date().toISOString(), checks, errorCode: check.errorCode || null };
+    ? [{ ...check, kind: "auth", model: null, modelCount: null, modelCatalog: null, quotaSummary: null }, check, ...additionalChecks]
+    : [check, ...additionalChecks];
+  const payload = { runId: crypto.randomUUID(), connectorId: connector.id, mode, credentialStatus, credentialExpiresAt: connector.credentialExpiresAt || null, credentialExpirySource: connector.credentialExpiresAt ? "configured_metadata" : null, subscriptionExpiresAt: connector.subscriptionExpiresAt || null, subscriptionExpirySource: connector.subscriptionExpiresAt ? "configured_metadata" : null, quotaResetsAt: connector.quotaResetsAt || null, overallStatus, observedAt: new Date().toISOString(), checks, errorCode: check.errorCode || null };
   const response = await fetch(`${catalogUrl}/api/ingest/v1/api-provider-probes`, { method: "POST", headers: { Authorization: `Bearer ${ingestKey}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   if (!response.ok) throw new Error(`ingest_${response.status}`);
   return { connector: connector.id, status: overallStatus };

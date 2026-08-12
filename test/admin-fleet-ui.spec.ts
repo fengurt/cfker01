@@ -17,8 +17,8 @@ describe("admin fleet UI release contract", () => {
   });
 
   it("cache-busts the fleet assets with the same release key", () => {
-    expect(workspace).toContain("/admin-ops-v2.css?v=20260812-api-2");
-    expect(workspace).toContain("/admin.js?v=20260812-api-2");
+    expect(workspace).toContain("/admin-ops-v2.css?v=20260812-api-3");
+    expect(workspace).toContain("/admin.js?v=20260812-api-3");
   });
 
   it("uses one integrated server board without the duplicate cost grid", () => {
@@ -47,5 +47,7 @@ describe("admin fleet UI release contract", () => {
     expect(adminScript).toContain('provider.officialLinks?.documentationUrl');
     expect(adminScript).toContain('t("subscribeOfficial")');
     expect(adminScript).toContain('t("officialDocs")');
+    expect(adminScript).toContain('provider.modelCatalog || []');
+    expect(adminScript).toContain('provider.validity?.credential?.expiresAt');
   });
 });
