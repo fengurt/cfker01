@@ -34,6 +34,7 @@
     "scanner:central": "node scripts/scanner-loop.mjs",
     "scanner:local": "node scripts/local-scanner-agent.mjs",
     "scanner:local:install": "./scripts/install-local-scanner-launchagent.sh",
+    "api-monitor:local:install": "./scripts/install-local-api-monitor-launchagent.sh",
     "task-core:dev": "node --watch services/task-core/server.mjs",
     "task-core:start": "node services/task-core/server.mjs",
     "task-core:test": "node --test services/task-core/test/*.test.mjs",

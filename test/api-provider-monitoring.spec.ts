@@ -139,4 +139,48 @@ describe("API provider monitoring", () => {
     expect([400, 401]).toContain(response.status);
     expect(await response.text()).not.toContain("must-not-be-stored");
   });
+
+  it("reports the recorded inference failure instead of treating recency as health", async () => {
+    const createCtx = createExecutionContext();
+    const created = await worker.fetch(
+      new Request("http://example.com/api/admin/v1/service-keys", {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({ name: "failed-inference-test", scopes: ["api-probes:write"], providers: ["api-provider"] }),
+      }),
+      env,
+      createCtx,
+    );
+    const key = ((await created.json()) as { data: { key: string } }).data.key;
+    await waitOnExecutionContext(createCtx);
+
+    const probeCtx = createExecutionContext();
+    const probe = await worker.fetch(
+      new Request("http://example.com/api/ingest/v1/api-provider-probes", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "openai-failed-inference-001",
+          connectorId: "openai",
+          mode: "inference",
+          credentialStatus: "configured",
+          overallStatus: "down",
+          observedAt: new Date().toISOString(),
+          checks: [{ kind: "inference", status: "down", latencyMs: 500, model: "gpt-5.5", errorCode: "network_error" }],
+        }),
+      }),
+      env,
+      probeCtx,
+    );
+    expect(probe.status).toBe(201);
+    await waitOnExecutionContext(probeCtx);
+
+    const readCtx = createExecutionContext();
+    const read = await worker.fetch(new Request("http://example.com/api/admin/v1/api-providers", { headers: adminHeaders }), env, readCtx);
+    await waitOnExecutionContext(readCtx);
+    const body = (await read.json()) as { data: Array<{ id: string; checks: Record<string, string>; inferenceStatus: string }> };
+    const openai = body.data.find((item) => item.id === "openai");
+    expect(openai?.checks.inference).toBe("down");
+    expect(openai?.inferenceStatus).toBe("down");
+  });
 });

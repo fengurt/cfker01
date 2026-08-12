@@ -28,7 +28,8 @@ export async function listApiProviders(env: Env): Promise<Record<string, unknown
       (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='auth' ORDER BY e.observed_at DESC LIMIT 1) auth_status,
       (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='models' ORDER BY e.observed_at DESC LIMIT 1) models_status,
       (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='quota' ORDER BY e.observed_at DESC LIMIT 1) quota_status,
-      (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='inference' ORDER BY e.observed_at DESC LIMIT 1) inference_status
+      (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='inference' ORDER BY e.observed_at DESC LIMIT 1) inference_status,
+      (SELECT observed_at FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='inference' ORDER BY e.observed_at DESC LIMIT 1) inference_observed_at
     FROM api_provider_connectors c ORDER BY c.provider,c.credential_kind,c.id
   `).all<Record<string, unknown>>();
   return (result.results ?? []).map(serializeConnector);
@@ -108,8 +109,13 @@ export async function ingestApiProviderProbe(env: Env, input: Record<string, unk
 function serializeConnector(row: Record<string, unknown>): Record<string, unknown> {
   const staleAt = row.stale_at ? Date.parse(String(row.stale_at)) : Number.NaN;
   const overallStatus = Number.isFinite(staleAt) && staleAt < Date.now() && row.overall_status !== "unconfigured" ? "stale" : row.overall_status;
-  const inferenceAge = row.last_inference_at ? Date.now() - Date.parse(String(row.last_inference_at)) : Number.POSITIVE_INFINITY;
-  const inferenceStatus = row.credential_kind === "subscription" ? "not_applicable" : row.credential_status === "unconfigured" ? "unconfigured" : inferenceAge > 30 * 60 * 60 * 1000 ? "stale" : "healthy";
+  const inferenceAge = row.inference_observed_at ? Date.now() - Date.parse(String(row.inference_observed_at)) : Number.POSITIVE_INFINITY;
+  const recordedInferenceStatus = statusValue(row.inference_status);
+  const inferenceStatus = row.credential_kind === "subscription" ? "not_applicable"
+    : row.credential_status === "unconfigured" ? "unconfigured"
+      : !row.inference_observed_at ? "unknown"
+        : inferenceAge > 30 * 60 * 60 * 1000 ? "stale"
+          : recordedInferenceStatus;
   const defaultCheck = row.credential_status === "unconfigured" ? "unconfigured" : "unknown";
   return { id: row.id, provider: row.provider, accountLabel: row.account_label, credentialType: row.credential_kind, enabled: Boolean(row.enabled), credentialStatus: row.credential_status, overallStatus, checks: { auth: row.auth_status ?? defaultCheck, models: row.models_status ?? defaultCheck, quota: row.quota_status ?? defaultCheck, inference: row.credential_kind === "subscription" ? "not_applicable" : inferenceStatus }, inferenceStatus, latencyMs: row.latency_ms == null ? null : Number(row.latency_ms), model: row.model ?? null, quotaSummary: row.quota_summary ?? null, lastCheckedAt: row.last_checked_at ?? null, lastInferenceAt: row.last_inference_at ?? null, nextDueAt: row.next_due_at ?? null, staleAt: row.stale_at ?? null, errorCode: row.last_error_code ?? null };
 }
