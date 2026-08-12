@@ -17,8 +17,8 @@ describe("admin fleet UI release contract", () => {
   });
 
   it("cache-busts the fleet assets with the same release key", () => {
-    expect(workspace).toContain("/admin-ops-v2.css?v=20260812-api-3");
-    expect(workspace).toContain("/admin.js?v=20260812-api-3");
+    expect(workspace).toContain("/admin-ops-v2.css?v=20260812-usage-1");
+    expect(workspace).toContain("/admin.js?v=20260812-usage-1");
   });
 
   it("uses one integrated server board without the duplicate cost grid", () => {
@@ -49,5 +49,18 @@ describe("admin fleet UI release contract", () => {
     expect(adminScript).toContain('t("officialDocs")');
     expect(adminScript).toContain('provider.modelCatalog || []');
     expect(adminScript).toContain('provider.validity?.credential?.expiresAt');
+  });
+
+  it("renders one project-attribution row with measured resource semantics", () => {
+    expect(adminScript).toContain("server.runtime_projects || []");
+    expect(adminScript).toContain("项目资源归因");
+    expect(adminScript).toContain("project.cpuHostRatio");
+    expect(adminScript).toContain("project.memoryHostRatio");
+    expect(adminScript).toContain("project.writableDiskRatio");
+    expect(adminScript).toContain("project.networkRxBytes");
+    expect(adminScript).toContain("project.blockReadBytes");
+    expect(adminScript).toContain("project.lastCodeUpdateAt");
+    expect(adminScript).toContain("project.lastSampleAt");
+    expect(adminScript).toContain("空间仅含容器可写层");
   });
 });
