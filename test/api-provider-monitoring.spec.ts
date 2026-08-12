@@ -76,6 +76,13 @@ describe("API provider monitoring", () => {
       observedAt: "2026-08-12T00:00:00.000Z",
       checks: [
         {
+          kind: "auth",
+          status: "healthy",
+          httpStatus: 200,
+          latencyMs: 40,
+          modelCount: null,
+        },
+        {
           kind: "models",
           status: "healthy",
           httpStatus: 200,

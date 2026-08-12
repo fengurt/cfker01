@@ -57,7 +57,7 @@ export async function listApiProviders(env: Env): Promise<Record<string, unknown
     SELECT c.*,
       (SELECT latency_ms FROM api_provider_probe_events e WHERE e.connector_id=c.id ORDER BY e.observed_at DESC LIMIT 1) latency_ms,
       (SELECT model FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model,
-      (SELECT model_count FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model_count IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_count,
+      (SELECT model_count FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='models' AND e.model_count IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_count,
       (SELECT model_catalog_json FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model_catalog_json IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_catalog_json,
       (SELECT quota_summary FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.quota_summary IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) quota_summary,
       (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='auth' ORDER BY e.observed_at DESC LIMIT 1) auth_status,
@@ -75,7 +75,7 @@ export async function getApiProvider(env: Env, id: string): Promise<Record<strin
     SELECT c.*,
       (SELECT latency_ms FROM api_provider_probe_events e WHERE e.connector_id=c.id ORDER BY e.observed_at DESC LIMIT 1) latency_ms,
       (SELECT model FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model,
-      (SELECT model_count FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model_count IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_count,
+      (SELECT model_count FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='models' AND e.model_count IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_count,
       (SELECT model_catalog_json FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.model_catalog_json IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) model_catalog_json,
       (SELECT quota_summary FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.quota_summary IS NOT NULL ORDER BY e.observed_at DESC LIMIT 1) quota_summary,
       (SELECT status FROM api_provider_probe_events e WHERE e.connector_id=c.id AND e.probe_kind='auth' ORDER BY e.observed_at DESC LIMIT 1) auth_status,
@@ -181,5 +181,5 @@ function serializeEvent(row: Record<string, unknown>): Record<string, unknown> {
 function clean(value: unknown, max: number): string | null { const text = String(value ?? "").trim(); return text ? text.slice(0, max) : null; }
 function optionalIso(value: unknown): string | null { const text = clean(value, 50); return text && !Number.isNaN(Date.parse(text)) ? new Date(text).toISOString() : null; }
 function parseStringArray(value: unknown): string[] { try { const parsed = JSON.parse(String(value ?? "[]")); return Array.isArray(parsed) ? parsed.map(String).slice(0, 500) : []; } catch { return []; } }
-function boundedNumber(value: unknown, min: number, max: number): number | null { const n = Number(value); return Number.isFinite(n) && n >= min && n <= max ? Math.round(n) : null; }
+function boundedNumber(value: unknown, min: number, max: number): number | null { if (value == null || value === "") return null; const n = Number(value); return Number.isFinite(n) && n >= min && n <= max ? Math.round(n) : null; }
 function statusValue(value: unknown): ApiProviderStatus { const status = String(value ?? "unknown") as ApiProviderStatus; return STATUS_VALUES.has(status) ? status : "unknown"; }
