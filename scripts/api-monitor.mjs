@@ -5,6 +5,10 @@ const ingestKey = process.env.API_MONITOR_KEY || "";
 const standardIntervalMs = Number(process.env.API_PROBE_INTERVAL_MS || 4 * 60 * 60 * 1000);
 const inferenceIntervalMs = Number(process.env.API_INFERENCE_INTERVAL_MS || 24 * 60 * 60 * 1000);
 const timeoutMs = Number(process.env.API_PROBE_TIMEOUT_MS || 15000);
+// Latest frontier models can legitimately take longer to produce their first
+// token than a read-only auth/models request. Keep routine checks fast while
+// giving the once-daily inference path enough time to avoid false incidents.
+const inferenceTimeoutMs = Number(process.env.API_INFERENCE_TIMEOUT_MS || 45000);
 const oneShot = process.env.API_MONITOR_ONCE === "1";
 const providerAllowlist = new Set(String(process.env.API_MONITOR_PROVIDER_ALLOWLIST || "").split(",").map((value) => value.trim()).filter(Boolean));
 const providerAllowed = (id) => providerAllowlist.size === 0 || providerAllowlist.has(id);
@@ -48,7 +52,7 @@ function openAiCompatible(id, provider, key, baseUrl, configuredModel, inference
           body: JSON.stringify(responsesApi
             ? { model, input: "ping", max_output_tokens: 16 }
             : { model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
-        }, () => ({ model }));
+        }, () => ({ model }), inferenceTimeoutMs);
         lastCheck = { ...check, model };
         if (check.status === "healthy") { selectedModel = model; return lastCheck; }
         if (check.httpStatus !== 404) return lastCheck;
@@ -114,13 +118,13 @@ function geminiConnector() {
     async inference() {
       if (!key) return unconfigured("inference");
       if (!selectedModel) return skipped("inference", "probe_model_unavailable");
-      return requestCheck("inference", `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(selectedModel)}:generateContent`, { method: "POST", headers: { "x-goog-api-key": key, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: "ping" }] }], generationConfig: { maxOutputTokens: 1 } }) }, () => ({ model: selectedModel }));
+      return requestCheck("inference", `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(selectedModel)}:generateContent`, { method: "POST", headers: { "x-goog-api-key": key, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: "ping" }] }], generationConfig: { maxOutputTokens: 1 } }) }, () => ({ model: selectedModel }), inferenceTimeoutMs);
     },
   };
 }
 
-async function requestCheck(kind, url, options, parseSuccess) {
-  const started = Date.now(), controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
+async function requestCheck(kind, url, options, parseSuccess, requestTimeoutMs = timeoutMs) {
+  const started = Date.now(), controller = new AbortController(), timer = setTimeout(() => controller.abort(), requestTimeoutMs);
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     const base = { kind, status: response.ok ? "healthy" : statusForHttp(response.status), httpStatus: response.status, latencyMs: Date.now() - started };
