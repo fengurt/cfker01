@@ -15,5 +15,8 @@ umask 077
     [[ -z "$ref" ]] || printf '%s=%s\n' "$key" "$(read_ref "$ref_name")"
   done
 } > "$TARGET"
+if [[ -n "${API_MONITOR_PROVIDER_ALLOWLIST:-}" ]]; then
+  printf 'API_MONITOR_PROVIDER_ALLOWLIST=%s\n' "$API_MONITOR_PROVIDER_ALLOWLIST" >> "$TARGET"
+fi
 chmod 600 "$TARGET"
 echo "Materialized $TARGET with mode 600; secret values were not printed."

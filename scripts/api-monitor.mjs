@@ -5,6 +5,8 @@ const ingestKey = process.env.API_MONITOR_KEY || "";
 const standardIntervalMs = Number(process.env.API_PROBE_INTERVAL_MS || 4 * 60 * 60 * 1000);
 const inferenceIntervalMs = Number(process.env.API_INFERENCE_INTERVAL_MS || 24 * 60 * 60 * 1000);
 const timeoutMs = Number(process.env.API_PROBE_TIMEOUT_MS || 15000);
+const oneShot = process.env.API_MONITOR_ONCE === "1";
+const providerAllowlist = new Set(String(process.env.API_MONITOR_PROVIDER_ALLOWLIST || "").split(",").map((value) => value.trim()).filter(Boolean));
 
 const providers = [
   openAiCompatible("doubao-ark", "doubao", process.env.DOUBAO_API_KEY, process.env.DOUBAO_API_BASE || "https://ark.cn-beijing.volces.com/api/v3", process.env.DOUBAO_PROBE_MODEL),
@@ -75,11 +77,14 @@ function perplexityConnector() {
   const key = process.env.PERPLEXITY_API_KEY;
   const model = process.env.PERPLEXITY_PROBE_MODEL || "sonar-pro";
   const url = "https://api.perplexity.ai/v1/sonar";
-  const request = (kind) => requestCheck(kind, url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, max_tokens: 1, disable_search: true, messages: [{ role: "user", content: "ping" }] }),
-  }, () => ({ model }));
+  const request = async (kind) => ({
+    ...(await requestCheck(kind, url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, max_tokens: 1, disable_search: true, messages: [{ role: "user", content: "ping" }] }),
+    }, () => ({ model }))),
+    model,
+  });
   return {
     id: "perplexity", provider: "perplexity", configured: Boolean(key), model, supportsInference: Boolean(key),
     async standard() { return key ? request("auth") : unconfigured("auth"); },
@@ -145,7 +150,7 @@ async function runProvider(connector, mode = "standard") {
 
 async function runCycle(mode = "standard", onlyId = null) {
   if (!ingestKey) throw new Error("api_monitor_key_unconfigured");
-  const selected = providers.filter((provider) => (!onlyId || provider.id === onlyId) && (mode !== "inference" || provider.supportsInference));
+  const selected = providers.filter((provider) => (providerAllowlist.size === 0 || providerAllowlist.has(provider.id)) && (!onlyId || provider.id === onlyId) && (mode !== "inference" || provider.supportsInference));
   const results = await Promise.allSettled(selected.map((provider) => runProvider(provider, mode)));
   const failed = results.filter((result) => result.status === "rejected").length;
   console.log(JSON.stringify({ event: "api_monitor.cycle", mode, providers: selected.length, failed, at: new Date().toISOString() }));
@@ -169,6 +174,8 @@ async function tick() {
 
 await tick();
 await runCycle("inference").catch(() => {});
-setInterval(() => { tick().catch(() => {}); }, standardIntervalMs);
-setInterval(() => { runCycle("inference").catch(() => {}); }, inferenceIntervalMs);
-setInterval(() => { pollJobs().catch(() => {}); }, 60_000);
+if (!oneShot) {
+  setInterval(() => { tick().catch(() => {}); }, standardIntervalMs);
+  setInterval(() => { runCycle("inference").catch(() => {}); }, inferenceIntervalMs);
+  setInterval(() => { pollJobs().catch(() => {}); }, 60_000);
+}
