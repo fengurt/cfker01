@@ -37,7 +37,9 @@ const result={version:"asset-discovery-v1",generatedAt:new Date().toISOString(),
 await mkdir(resolve(output,".."),{recursive:true});await writeFile(output,`${JSON.stringify(result,null,2)}\n`);
 let uploadStatus=args.has("--upload")?"completed":"not_requested";
 if(args.has("--upload")){const uploaded=await upload(result);uploadStatus=uploaded?.data?.status||"completed";}
-console.log(JSON.stringify({output,count:assets.length,summary:result.summary,errors,uploadStatus},null,2));
+// Scanner-loop consumes one JSON record from stdout. Keep this single-line so
+// a successful ingestion cannot be misreported as a sidecar process failure.
+console.log(JSON.stringify({output,count:assets.length,summary:result.summary,errors,uploadStatus}));
 
 async function discoverTencent(){
   const account=await jsonCommand("tccli",["cam","GetUserAppId","--region","ap-guangzhou"]),accountId=String(account.AppId||account.OwnerUin||"default");accounts.push({provider:"tencent",accountId});

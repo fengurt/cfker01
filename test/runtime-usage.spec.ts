@@ -3,11 +3,17 @@ import { aggregateRuntimeProjects } from "../src/lib/runtime-usage";
 // @ts-ignore The production scanner is intentionally authored as a Node ESM module.
 import { cliStats, dockerApiStats, parseDockerBytes } from "../scripts/lib/docker-runtime-metrics.mjs";
 import scannerDockerfile from "../Dockerfile.sync?raw";
+import scannerSource from "../scripts/discover-assets.mjs?raw";
 
 describe("runtime project usage", () => {
   it("packages every runtime scanner import into the production image", () => {
     expect(scannerDockerfile).toContain("scripts/lib/docker-runtime-metrics.mjs");
     expect(scannerDockerfile).toContain("scripts/lib/dns-probe.mjs");
+  });
+
+  it("emits one JSON record so completed jobs are not logged as failed", () => {
+    expect(scannerSource).toContain("console.log(JSON.stringify({output,count:assets.length,summary:result.summary,errors,uploadStatus}));");
+    expect(scannerSource).not.toContain("uploadStatus},null,2");
   });
   it("normalizes Docker CLI units without inventing missing values", () => {
     expect(parseDockerBytes("1.5 GiB")).toBe(1610612736);
