@@ -100,6 +100,8 @@ const translations = {
     attention: "需关注",
     unconfigured: "未配置",
     connectors: "连接器",
+    subscribeOfficial: "订阅 / 充值",
+    officialDocs: "官方文档",
   },
   en: {
     skip: "Skip to admin",
@@ -202,6 +204,8 @@ const translations = {
     attention: "Attention",
     unconfigured: "Unconfigured",
     connectors: "Connectors",
+    subscribeOfficial: "Subscribe / billing",
+    officialDocs: "Official docs",
   },
 };
 Object.assign(translations["zh-CN"], {
@@ -1815,9 +1819,13 @@ async function loadApiProviders() {
     $("#server-api-issues").textContent = problem;
     target.replaceChildren();
     for (const provider of providers) {
-      const row = document.createElement("article"), identity = document.createElement("div"), name = document.createElement("strong"), meta = document.createElement("small"), checks = document.createElement("div"), timing = document.createElement("small"), action = document.createElement("button");
+      const row = document.createElement("article"), identity = document.createElement("div"), name = document.createElement("strong"), meta = document.createElement("small"), links = document.createElement("nav"), checks = document.createElement("div"), timing = document.createElement("small"), action = document.createElement("button");
       row.className = "api-provider-row"; row.dataset.status = provider.overallStatus;
-      name.textContent = provider.accountLabel; meta.textContent = `${provider.provider} · ${provider.credentialType}`; identity.append(name, meta);
+      name.textContent = provider.accountLabel; meta.textContent = `${provider.provider} · ${provider.credentialType}`;
+      links.className = "api-provider-links"; links.setAttribute("aria-label", locale === "zh-CN" ? `${provider.accountLabel} 官方入口` : `${provider.accountLabel} official resources`);
+      if (provider.officialLinks?.subscriptionUrl) links.append(externalLink(t("subscribeOfficial"), provider.officialLinks.subscriptionUrl, "api-provider-link"));
+      if (provider.officialLinks?.documentationUrl) links.append(externalLink(t("officialDocs"), provider.officialLinks.documentationUrl, "api-provider-link"));
+      identity.append(name, meta, links);
       checks.className = "api-provider-checks"; checks.append(statusBadge(provider.overallStatus), textCell(provider.model || t("noModel")), textCell(provider.latencyMs == null ? "—" : `${provider.latencyMs} ms`));
       timing.textContent = provider.lastCheckedAt ? `${t("checked")} ${formatDateTime(provider.lastCheckedAt)} · ${t("nextCheck")} ${formatDateTime(provider.nextDueAt)}` : t("notChecked");
       action.type = "button"; action.dataset.providerProbe = provider.id; action.textContent = locale === "zh-CN" ? "立即检查" : "Check now";

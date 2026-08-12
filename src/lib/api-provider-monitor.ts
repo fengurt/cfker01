@@ -8,6 +8,39 @@ export const API_PROVIDER_IDS = [
   "gemini",
 ] as const;
 
+type ApiProviderId = (typeof API_PROVIDER_IDS)[number];
+
+export const API_PROVIDER_OFFICIAL_LINKS: Record<ApiProviderId, { subscriptionUrl: string; documentationUrl: string }> = {
+  "doubao-ark": {
+    subscriptionUrl: "https://console.volcengine.com/ark/region:ark+cn-beijing/model",
+    documentationUrl: "https://www.volcengine.com/docs/82379/1795150?lang=zh",
+  },
+  "minimax-api": {
+    subscriptionUrl: "https://platform.minimaxi.com/console/recharge-records",
+    documentationUrl: "https://platform.minimaxi.com/docs/api-reference/api-overview",
+  },
+  "minimax-coding-plan": {
+    subscriptionUrl: "https://platform.minimaxi.com/console/plan",
+    documentationUrl: "https://platform.minimaxi.com/docs/token-plan/quickstart",
+  },
+  openai: {
+    subscriptionUrl: "https://platform.openai.com/settings/organization/billing/overview",
+    documentationUrl: "https://developers.openai.com/api/docs/quickstart",
+  },
+  perplexity: {
+    subscriptionUrl: "https://console.perplexity.ai/",
+    documentationUrl: "https://docs.perplexity.ai/docs/getting-started/quickstart",
+  },
+  moonshot: {
+    subscriptionUrl: "https://platform.moonshot.cn/console",
+    documentationUrl: "https://platform.moonshot.cn/docs/intro",
+  },
+  gemini: {
+    subscriptionUrl: "https://aistudio.google.com/app/billing",
+    documentationUrl: "https://ai.google.dev/gemini-api/docs/get-started",
+  },
+};
+
 export type ApiProviderStatus = "healthy" | "degraded" | "down" | "stale" | "unconfigured" | "unknown";
 const STATUS_VALUES = new Set<ApiProviderStatus>(["healthy", "degraded", "down", "stale", "unconfigured", "unknown"]);
 const CHECK_KINDS = new Set(["auth", "models", "quota", "inference"]);
@@ -117,7 +150,8 @@ function serializeConnector(row: Record<string, unknown>): Record<string, unknow
         : inferenceAge > 30 * 60 * 60 * 1000 ? "stale"
           : recordedInferenceStatus;
   const defaultCheck = row.credential_status === "unconfigured" ? "unconfigured" : "unknown";
-  return { id: row.id, provider: row.provider, accountLabel: row.account_label, credentialType: row.credential_kind, enabled: Boolean(row.enabled), credentialStatus: row.credential_status, overallStatus, checks: { auth: row.auth_status ?? defaultCheck, models: row.models_status ?? defaultCheck, quota: row.quota_status ?? defaultCheck, inference: row.credential_kind === "subscription" ? "not_applicable" : inferenceStatus }, inferenceStatus, latencyMs: row.latency_ms == null ? null : Number(row.latency_ms), model: row.model ?? null, quotaSummary: row.quota_summary ?? null, lastCheckedAt: row.last_checked_at ?? null, lastInferenceAt: row.last_inference_at ?? null, nextDueAt: row.next_due_at ?? null, staleAt: row.stale_at ?? null, errorCode: row.last_error_code ?? null };
+  const officialLinks = API_PROVIDER_OFFICIAL_LINKS[String(row.id) as ApiProviderId] ?? null;
+  return { id: row.id, provider: row.provider, accountLabel: row.account_label, credentialType: row.credential_kind, enabled: Boolean(row.enabled), credentialStatus: row.credential_status, overallStatus, checks: { auth: row.auth_status ?? defaultCheck, models: row.models_status ?? defaultCheck, quota: row.quota_status ?? defaultCheck, inference: row.credential_kind === "subscription" ? "not_applicable" : inferenceStatus }, inferenceStatus, latencyMs: row.latency_ms == null ? null : Number(row.latency_ms), model: row.model ?? null, quotaSummary: row.quota_summary ?? null, lastCheckedAt: row.last_checked_at ?? null, lastInferenceAt: row.last_inference_at ?? null, nextDueAt: row.next_due_at ?? null, staleAt: row.stale_at ?? null, errorCode: row.last_error_code ?? null, officialLinks };
 }
 
 function serializeEvent(row: Record<string, unknown>): Record<string, unknown> {

@@ -29,7 +29,7 @@ describe("API provider monitoring", () => {
     await waitOnExecutionContext(ctx);
     expect(response.status).toBe(200);
     const text = await response.text();
-    const body = JSON.parse(text) as { data: Array<{ id: string; checks: Record<string, string> }> };
+    const body = JSON.parse(text) as { data: Array<{ id: string; checks: Record<string, string>; officialLinks: { subscriptionUrl: string; documentationUrl: string } }> };
     expect(body.data.map((item) => item.id)).toEqual(
       expect.arrayContaining([
         "doubao-ark",
@@ -42,6 +42,9 @@ describe("API provider monitoring", () => {
       ]),
     );
     expect(body.data.every((item) => ["auth", "models", "quota", "inference"].every((kind) => kind in item.checks))).toBe(true);
+    expect(body.data.every((item) => item.officialLinks.subscriptionUrl.startsWith("https://") && item.officialLinks.documentationUrl.startsWith("https://"))).toBe(true);
+    expect(body.data.find((item) => item.id === "minimax-coding-plan")?.officialLinks.subscriptionUrl).toBe("https://platform.minimaxi.com/console/plan");
+    expect(body.data.find((item) => item.id === "openai")?.officialLinks.documentationUrl).toBe("https://developers.openai.com/api/docs/quickstart");
     expect(text).not.toMatch(/api.?key|password|secret/i);
   });
 
