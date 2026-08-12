@@ -103,7 +103,7 @@ const translations = {
     subscribeOfficial: "订阅 / 充值",
     officialDocs: "官方文档",
     availableModels: "可用模型",
-    keyExpiryUnknown: "Key 到期：供应商未提供查询接口",
+    keyExpiryUnknown: "Key 到期：当前凭据无法查询",
     keyExpires: "Key 到期",
   },
   en: {
@@ -210,7 +210,7 @@ const translations = {
     subscribeOfficial: "Subscribe / billing",
     officialDocs: "Official docs",
     availableModels: "Available models",
-    keyExpiryUnknown: "Key expiry: not exposed by provider",
+    keyExpiryUnknown: "Key expiry: unavailable to the current credential",
     keyExpires: "Key expires",
   },
 };
