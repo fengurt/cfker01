@@ -2,7 +2,7 @@
 import http from "node:http";
 
 const socketPath=process.env.DOCKER_SOCKET||"/var/run/docker.sock",port=Number(process.env.PORT||2375);
-const allowed=[/^\/containers\/json(?:\?all=[01])?$/, /^\/containers\/[a-f0-9]{12,64}\/json$/];
+const allowed=[/^\/containers\/json(?:\?all=[01](?:&size=[01])?)?$/, /^\/containers\/[a-f0-9]{12,64}\/json$/, /^\/containers\/[a-f0-9]{12,64}\/stats\?stream=false&one-shot=true$/];
 
 http.createServer((request,response)=>{
   if(request.url==="/health"){response.writeHead(200,{"Content-Type":"text/plain"});response.end("ok");return;}

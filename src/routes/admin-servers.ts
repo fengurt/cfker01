@@ -1,11 +1,14 @@
 import { requireAdminToken } from "../lib/auth";
+import { aggregateRuntimeProjects } from "../lib/runtime-usage";
 
 export async function handleAdminServers(request:Request,env:Env,ctx:ExecutionContext){
   const auth=await requireAdminToken(request,env);if(auth)return auth;
   const url=new URL(request.url),parts=url.pathname.split("/").filter(Boolean),id=parts[2];
   if(request.method==="GET"&&id&&parts[3]==="runtime"){
     const rows=await env.MGMT_DB.prepare(`SELECT * FROM discovered_assets WHERE server_id=?1 AND provider IN ('docker','tencent') AND kind IN ('container','compose_project','server_runtime','runtime_container','runtime_service','tat_agent') AND status!='stale' ORDER BY kind,name`).bind(id).all<Record<string,unknown>>();
-    return Response.json({data:(rows.results??[]).map(value=>({...value,metadata:parseMetadata(value.metadata),isStale:Boolean(value.stale_after&&String(value.stale_after)<new Date().toISOString())}))});
+    const runtime:Record<string,any>[]=(rows.results??[]).map(value=>({...value,metadata:parseMetadata(value.metadata),isStale:Boolean(value.stale_after&&String(value.stale_after)<new Date().toISOString())}));
+    const host=runtime.find(value=>value.kind==="server_runtime")??null;
+    return Response.json({data:runtime,meta:{projects:aggregateRuntimeProjects(runtime,host)}});
   }
   if(request.method==="GET"){
     if(url.searchParams.get("compact")==="1"){
@@ -47,7 +50,7 @@ export async function handleAdminServers(request:Request,env:Env,ctx:ExecutionCo
     const billingRunAt=Date.parse(String(billingRun?.completed_at??billingRun?.started_at??"")),billingRunFresh=Number.isFinite(billingRunAt)&&Date.now()-billingRunAt<=26*60*60*1000,billingRunComplete=["complete","completed"].includes(String(billingRun?.status??""));
     const billingStatus=billingAccount&&billingRunComplete&&billingRunFresh?"available":billingAccount?"stale":"unavailable";
     const billingSummary={status:billingStatus,account:billingMetadata.accountId??null,balanceCNY:billingMetadata.balanceCNY??null,frozenCNY:billingMetadata.frozenCNY??null,month:billingMetadata.month??null,lastVerifiedAt:billingAccount?.last_seen_at??null,resourceCount:billingResources.length,runStatus:billingRun?.status??null,runCompletedAt:billingRun?.completed_at??null,error:billingRun?.error_message??null};
-    return Response.json({data:serverRows.map(server=>{const runtime=(runtimeByServer.get(String(server.id))??[]).map(value=>attachRepository(value,repositories)),dns=dnsByServer.get(String(server.id))??[],billing=billingByServer.get(String(server.id))??[];return{...server,effective_status:effectiveStatus(server),is_stale:isStale(server),runtime_coverage:runtimeCoverage(runtime),runtime_assets:runtime,dns_records:dns,billing:billingSummaryForServer(billing),deployments:(byServer.get(String(server.id))??[]).map(deployment=>({...deployment,effective_health_status:deploymentHealth(deployment)}))};}),meta:{billing:billingSummary}});
+    return Response.json({data:serverRows.map(server=>{const runtime=(runtimeByServer.get(String(server.id))??[]).map(value=>attachRepository(value,repositories)),host=runtime.find(value=>value.kind==="server_runtime")??null,dns=dnsByServer.get(String(server.id))??[],billing=billingByServer.get(String(server.id))??[];return{...server,effective_status:effectiveStatus(server),is_stale:isStale(server),runtime_coverage:runtimeCoverage(runtime),runtime_assets:runtime,runtime_projects:aggregateRuntimeProjects(runtime,host),dns_records:dns,billing:billingSummaryForServer(billing),deployments:(byServer.get(String(server.id))??[]).map(deployment=>({...deployment,effective_health_status:deploymentHealth(deployment)}))};}),meta:{billing:billingSummary}});
   }
   if(request.method!=="PUT"&&request.method!=="POST")return Response.json({error:"method_not_allowed"},{status:405});
   let body:Record<string,any>;try{body=await request.json();}catch{return Response.json({error:"invalid_json"},{status:400});}

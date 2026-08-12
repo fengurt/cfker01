@@ -1424,16 +1424,50 @@ function renderFleetServerRecord(server) {
 }
 
 function renderFleetServices(server) {
-  const section = document.createElement("section"), title = document.createElement("h3"), assets = server.runtime_assets || [], services = assets.filter((item) => ["compose_project", "runtime_service"].includes(item.kind)), containers = assets.filter((item) => ["container", "runtime_container"].includes(item.kind));
-  section.className = "fleet-record-section fleet-record-services"; title.textContent = (locale === "zh-CN" ? "运行服务" : "Runtime services") + " · " + services.length; section.append(title);
-  if (!services.length) { const empty = document.createElement("p"); empty.className = "fleet-record-empty"; empty.textContent = locale === "zh-CN" ? "暂无已发现服务。" : "No runtime services discovered."; section.append(empty); return section; }
-  const list = document.createElement("div"); list.className = "fleet-service-list";
-  for (const service of services) {
-    const row = document.createElement("div"), name = service.url ? externalLink(service.name, service.url, "url-link") : plainStrong(service.name), meta = document.createElement("small"), serviceContainers = containers.filter((container) => (container.metadata?.composeProject || container.name) === service.name).map((container) => container.name);
-    row.className = "fleet-service-row"; meta.textContent = (serviceContainers.length || service.metadata?.containerCount || 0) + " containers · " + (service.metadata?.workingDir || (locale === "zh-CN" ? "工作目录未采集" : "working directory unknown")) + (service.repository?.url ? " · " + (locale === "zh-CN" ? "仓库 " : "repo ") + repositoryName(service.repository.url) : ""); row.append(name, meta); list.append(row);
-  }
+  const section = document.createElement("section"), heading = document.createElement("div"), title = document.createElement("h3"), note = document.createElement("p"), assets = server.runtime_assets || [], containers = assets.filter((item) => ["container", "runtime_container"].includes(item.kind)), projects = (server.runtime_projects || []).map((project) => ({ ...project, containers: containers.filter((container) => (container.metadata?.composeProject || container.name) === project.name) }));
+  section.className = "fleet-record-section fleet-record-services";
+  heading.className = "fleet-project-usage-heading";
+  title.textContent = (locale === "zh-CN" ? "项目资源归因" : "Project resource attribution") + " · " + projects.length;
+  note.textContent = locale === "zh-CN" ? "CPU 为瞬时采样；网络与块 I/O 为容器启动后累计；空间仅含容器可写层。" : "CPU is sampled; network and block I/O are cumulative since start; space is container writable layer only.";
+  heading.append(title, note); section.append(heading);
+  if (!projects.length) { const empty = document.createElement("p"); empty.className = "fleet-record-empty"; empty.textContent = locale === "zh-CN" ? "暂无可归因的运行项目。" : "No runtime project can be attributed yet."; section.append(empty); return section; }
+  const list = document.createElement("div"); list.className = "fleet-project-usage-list";
+  for (const project of projects) list.append(renderProjectUsage(project));
   section.append(list); return section;
 }
+
+function renderProjectUsage(project) {
+  const row = document.createElement("article"), head = document.createElement("div"), identity = document.createElement("div"), name = project.url ? externalLink(project.name, project.url, "url-link") : plainStrong(project.name), status = document.createElement("span"), meta = document.createElement("small"), measures = document.createElement("div"), activity = document.createElement("div");
+  row.className = `fleet-project-usage is-${project.status || "unavailable"}`;
+  head.className = "fleet-project-usage-head"; identity.className = "fleet-project-identity"; status.className = `fleet-project-observation is-${project.status || "unavailable"}`;
+  status.textContent = project.status === "observed" ? (locale === "zh-CN" ? "已采样" : "Observed") : project.status === "partial" ? (locale === "zh-CN" ? "部分采样" : "Partial") : (locale === "zh-CN" ? "等待新扫描" : "Awaiting scan");
+  meta.textContent = `${project.containerCount || 0} containers · ${project.workingDir || (locale === "zh-CN" ? "工作目录未采集" : "working directory unknown")}`;
+  identity.append(name, meta);
+  if (project.repository?.url) { const repo = document.createElement("small"); repo.className = "fleet-project-repository"; repo.append(locale === "zh-CN" ? "仓库 " : "Repo ", externalLink(project.repository.name || repositoryName(project.repository.url), project.repository.url, "repo-link")); identity.append(repo); }
+  head.append(identity, status);
+  measures.className = "fleet-project-measures";
+  appendProjectMeasure(measures, "CPU", project.cpuHostRatio, project.cpuPercent === null ? null : `${Number(project.cpuPercent).toFixed(1)}% Docker · ${formatRatio(project.cpuHostRatio)} ${locale === "zh-CN" ? "整机" : "host"}`);
+  appendProjectMeasure(measures, "RAM", project.memoryHostRatio, project.memoryUsageBytes === null ? null : `${formatBytes(project.memoryUsageBytes)} · ${formatRatio(project.memoryHostRatio)} ${locale === "zh-CN" ? "整机" : "host"}`);
+  appendProjectMeasure(measures, locale === "zh-CN" ? "可写层" : "Writable", project.writableDiskRatio, project.writableBytes === null ? null : `${formatBytes(project.writableBytes)} · ${formatRatio(project.writableDiskRatio)} ${locale === "zh-CN" ? "主机盘" : "host disk"}`);
+  appendProjectMeasure(measures, locale === "zh-CN" ? "网络累计" : "Network total", null, project.networkRxBytes === null && project.networkTxBytes === null ? null : `↓ ${formatBytes(project.networkRxBytes || 0)} · ↑ ${formatBytes(project.networkTxBytes || 0)}`);
+  appendProjectMeasure(measures, locale === "zh-CN" ? "块 I/O 累计" : "Block I/O total", null, project.blockReadBytes === null && project.blockWriteBytes === null ? null : `R ${formatBytes(project.blockReadBytes || 0)} · W ${formatBytes(project.blockWriteBytes || 0)}`);
+  activity.className = "fleet-project-activity";
+  activity.append(projectActivity(locale === "zh-CN" ? "代码更新" : "Code update", project.lastCodeUpdateAt), projectActivity(locale === "zh-CN" ? "运行变更" : "Runtime change", project.lastRuntimeChangeAt), projectActivity(locale === "zh-CN" ? "使用量采样" : "Usage sampled", project.lastSampleAt));
+  row.append(head, measures, activity);
+  if (project.containers?.length) { const disclosure = document.createElement("details"), summary = document.createElement("summary"), body = document.createElement("div"); disclosure.className = "fleet-project-containers"; summary.textContent = `${project.containers.length} ${locale === "zh-CN" ? "个容器明细" : "container details"}`; for (const container of project.containers) body.append(renderRuntimeContainer(container)); disclosure.append(summary, body); row.append(disclosure); }
+  return row;
+}
+
+function appendProjectMeasure(parent, label, ratioValue, detailValue) {
+  const measure = document.createElement("div"), head = document.createElement("div"), labelNode = document.createElement("small"), value = document.createElement("strong");
+  measure.className = `fleet-project-measure ${ratioValue === null ? "is-unavailable" : capacityTone(ratioValue)}`;
+  labelNode.textContent = label; value.textContent = detailValue || (locale === "zh-CN" ? "旧扫描无此字段" : "Not in retained scan"); head.append(labelNode, value); measure.append(head);
+  if (ratioValue !== null) { const meter = document.createElement("meter"); meter.min = 0; meter.max = 1; meter.value = Math.max(0, Math.min(1, Number(ratioValue))); meter.setAttribute("aria-label", `${label} ${formatRatio(ratioValue)}`); measure.append(meter); }
+  parent.append(measure);
+}
+
+function projectActivity(label, value) { const item = document.createElement("span"), key = document.createElement("small"), time = document.createElement("strong"); key.textContent = label; time.textContent = value ? formatDateTime(value) : "-"; item.append(key, time); return item; }
+function formatRatio(value) { return value === null || value === undefined || !Number.isFinite(Number(value)) ? "-" : `${(Number(value) * 100).toFixed(Number(value) < .01 ? 2 : 1)}%`; }
 
 function serverRecommendation(server) {
   const host = runtimeHost(server) || {};
@@ -1669,7 +1703,8 @@ function renderRuntimeContainer(container) {
   name.textContent = container.name;
   const m = container.metadata || {},
     details = document.createElement("small");
-  details.textContent = `${m.composeService || "standalone"} / ${m.image || "image unknown"} / ${m.health || m.state || container.status || "unknown"} / ${Array.isArray(m.ports) ? m.ports.join(", ") : m.ports || "no published ports"}${m.stats ? ` / CPU ${m.stats.cpu || "-"} / RAM ${m.stats.memory || "-"}` : ""}`;
+  const usage = m.stats ? ` / CPU ${m.stats.cpuPercent === null || m.stats.cpuPercent === undefined ? m.stats.cpu || "-" : `${Number(m.stats.cpuPercent).toFixed(1)}%`} / RAM ${m.stats.memoryUsageBytes === null || m.stats.memoryUsageBytes === undefined ? m.stats.memory || "-" : formatBytes(m.stats.memoryUsageBytes)} / RW ${m.sizeRwBytes === null || m.sizeRwBytes === undefined ? "-" : formatBytes(m.sizeRwBytes)}` : "";
+  details.textContent = `${m.composeService || "standalone"} / ${m.image || "image unknown"} / ${m.health || m.state || container.status || "unknown"} / ${Array.isArray(m.ports) ? m.ports.join(", ") : m.ports || "no published ports"}${usage}`;
   line.append(name, details);
   return line;
 }
