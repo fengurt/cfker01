@@ -97,6 +97,8 @@ Resource operations include tags and pin ranks, source/scan timestamps, server s
 
 Create a dedicated `TableAI Catalog` item in 1Password. Copy `config/onepassword.refs.example` to the gitignored `.env.1password`, then replace each required value with one exact `op://` reference. Item-title searches are intentionally unsupported so duplicate items cannot be selected heuristically.
 
+Provider API keys use one canonical API Credential item per independently rotatable key. Authorized administrator Agents must follow [the API credential and model-discovery guide](./docs/admin-agent-api-credentials.md) and can validate metadata without printing secrets using `npm run api-credentials:validate`.
+
 ```bash
 npm run secrets:local
 ./scripts/dev-up.sh
