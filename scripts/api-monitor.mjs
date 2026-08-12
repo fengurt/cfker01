@@ -119,7 +119,7 @@ function perplexityConnector() {
       if (!key) return unconfigured("auth");
       const [auth, catalog] = await Promise.all([
         request("auth"),
-        requestCheck("models", "https://api.perplexity.ai/v1/models", {}, async (response) => {
+        requestCheck("models", "https://api.perplexity.ai/v1/models", { headers: { Authorization: `Bearer ${key}` } }, async (response) => {
           const data = await response.json().catch(() => ({}));
           const models = Array.isArray(data?.data) ? data.data.map((item) => String(item?.id || "")).filter(Boolean) : [];
           return { model, modelCount: models.length, modelCatalog: models.slice(0, 500) };
