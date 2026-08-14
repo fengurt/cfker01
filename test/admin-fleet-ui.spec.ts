@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import workspace from "../src/components/AdminWorkspace.astro?raw";
 import adminScript from "../public/admin.js?raw";
+import adminServersRoute from "../src/routes/admin-servers.ts?raw";
 
 describe("admin fleet UI release contract", () => {
   it("keeps authentication neutral until the session check completes", () => {
@@ -74,5 +75,7 @@ describe("admin fleet UI release contract", () => {
     expect(adminScript).toContain('"containers-desc"');
     expect(adminScript).toContain('"disk-free-desc"');
     expect(adminScript).toContain("filteredFleetServers");
+    expect(adminServersRoute).toContain('["cvm","lighthouse"].includes');
+    expect(adminServersRoute).toContain("region:server.region??cloudAsset?.region??null");
   });
 });
