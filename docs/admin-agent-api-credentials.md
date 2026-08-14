@@ -17,6 +17,7 @@ Current production items:
 | Provider | Canonical item | Credential field | Runtime variable |
 | --- | --- | --- | --- |
 | Doubao / Volcengine Ark | `TableAI API · Doubao Ark · Production` | `credential` | `DOUBAO_API_KEY` |
+| Volcengine Agent Plan + Doubao Search | `TableAI API · Volcengine Agent Plan · Production` | `password` | `VOLCENGINE_AGENT_PLAN_API_KEY` |
 | MiniMax pay-as-you-go | `TableAI API · MiniMax · Production` | `credential` | `MINIMAX_API_KEY` |
 | MiniMax Coding Plan | `TableAI API · MiniMax Coding Plan · Production` | `credential` | `MINIMAX_SUBSCRIPTION_KEY` |
 | OpenAI | `TableAI API · OpenAI · Production` | `credential` | `OPENAI_API_KEY` |
@@ -83,6 +84,23 @@ For normal inspection and model discovery, an Agent must call the protected admi
 7. Revoke the old provider key. Never delete the legacy 1Password item until the new key has passed production verification.
 
 Perplexity currently returns `401` and its canonical item must remain `needs-rotation` until a replacement passes. Gemini remains optional/unconfigured until a unique API key exists.
+
+## Volcengine Plan boundary
+
+The ordinary Ark key and the Agent Plan key are separate credentials with
+separate billing paths:
+
+- ordinary Ark inference uses `https://ark.cn-beijing.volces.com/api/v3`;
+- Agent Plan inference uses `https://ark.cn-beijing.volces.com/api/plan/v3`;
+- Agent Plan Doubao Search uses
+  `https://open.feedcoopapi.com/search_api/web_search` and the same dedicated
+  Agent Plan key.
+
+The APUCH Agent Plan Medium subscription and Doubao Search Harness were verified
+on 2026-08-12. Search includes 500 free calls per month and then consumes 5 AFP
+per call; off-plan post-pay is disabled. The separate Volcengine Coding Plan was
+not subscribed at that time. Do not purchase it automatically or confuse it
+with the independently verified MiniMax Coding Plan credential.
 
 ## Validity semantics
 

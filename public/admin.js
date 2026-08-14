@@ -264,6 +264,7 @@ let locale = localStorage.getItem("tableai-locale") || "zh-CN",
   filterTimer = null,
   sourcePollTimer = null;
 let resourceView = "servers";
+const fleetView = { state: "", region: "", sort: "priority" };
 const projectFilters = {
   type: new Set(),
   platform: new Set(),
@@ -1132,14 +1133,93 @@ function dueLabel(server) {
       : "No due date";
 }
 function appendFleetCount(target, count, label, state) {
-  const item = document.createElement("span"),
+  const item = document.createElement("button"),
     number = document.createElement("strong"),
     text = document.createElement("span");
+  const filterValue = state === "all" ? "" : state;
+  item.type = "button";
   item.className = `fleet-status-count is-${state}`;
+  item.dataset.fleetState = filterValue;
+  item.setAttribute("aria-pressed", String(fleetView.state === filterValue));
+  if (fleetView.state === filterValue) item.classList.add("is-active");
+  item.addEventListener("click", () => {
+    fleetView.state = fleetView.state === filterValue && filterValue ? "" : filterValue;
+    renderServers();
+  });
   number.textContent = count;
   text.textContent = label;
   item.append(number, text);
   target.append(item);
+}
+const UNKNOWN_FLEET_REGION = "__unknown__";
+function fleetRegionValue(server) {
+  return String(server.region || "").trim() || UNKNOWN_FLEET_REGION;
+}
+function fleetRegionLabel(value) {
+  if (value !== UNKNOWN_FLEET_REGION) return value;
+  return locale === "zh-CN" ? "地域未采集" : "Region not collected";
+}
+function serverContainerCount(server) {
+  const value = server.runtime_coverage?.container_count;
+  return value === null || value === undefined || !Number.isFinite(Number(value))
+    ? null
+    : Number(value);
+}
+function serverAvailableDiskBytes(server) {
+  const host = runtimeHost(server);
+  if (!host) return null;
+  const available = Number(host.diskAvailableBytes);
+  if (Number.isFinite(available) && available >= 0) return available;
+  const total = Number(host.diskTotalBytes), used = Number(host.diskUsedBytes);
+  return Number.isFinite(total) && total > 0 && Number.isFinite(used)
+    ? Math.max(0, total - used)
+    : null;
+}
+function compareFleetNumber(left, right, direction) {
+  const leftKnown = Number.isFinite(left), rightKnown = Number.isFinite(right);
+  if (leftKnown !== rightKnown) return leftKnown ? -1 : 1;
+  if (!leftKnown) return 0;
+  return direction === "asc" ? left - right : right - left;
+}
+function filteredFleetServers() {
+  const result = servers.filter((server) =>
+    (!fleetView.state || fleetState(server) === fleetView.state) &&
+    (!fleetView.region || fleetRegionValue(server) === fleetView.region),
+  );
+  const byName = (left, right) => String(left.name || "").localeCompare(String(right.name || ""), locale);
+  if (fleetView.sort === "region") {
+    result.sort((left, right) => fleetRegionLabel(fleetRegionValue(left)).localeCompare(fleetRegionLabel(fleetRegionValue(right)), locale) || byName(left, right));
+  } else if (fleetView.sort.startsWith("containers-")) {
+    const direction = fleetView.sort.endsWith("asc") ? "asc" : "desc";
+    result.sort((left, right) => compareFleetNumber(serverContainerCount(left), serverContainerCount(right), direction) || byName(left, right));
+  } else if (fleetView.sort.startsWith("disk-free-")) {
+    const direction = fleetView.sort.endsWith("asc") ? "asc" : "desc";
+    result.sort((left, right) => compareFleetNumber(serverAvailableDiskBytes(left), serverAvailableDiskBytes(right), direction) || byName(left, right));
+  }
+  return result;
+}
+function appendFleetOption(select, value, label) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  select.append(option);
+}
+function configureFleetControls() {
+  const regionFilter = $("#fleet-region-filter"), sortControl = $("#fleet-server-sort");
+  const regions = [...new Set(servers.map(fleetRegionValue))].sort((left, right) => fleetRegionLabel(left).localeCompare(fleetRegionLabel(right), locale));
+  if (fleetView.region && !regions.includes(fleetView.region)) fleetView.region = "";
+  regionFilter.replaceChildren();
+  appendFleetOption(regionFilter, "", locale === "zh-CN" ? "全部地域" : "All regions");
+  for (const region of regions) appendFleetOption(regionFilter, region, fleetRegionLabel(region));
+  regionFilter.value = fleetView.region;
+  regionFilter.onchange = () => { fleetView.region = regionFilter.value; renderServers(); };
+  sortControl.replaceChildren();
+  const sortOptions = locale === "zh-CN"
+    ? [["priority", "运营优先"], ["region", "地域"], ["containers-desc", "Docker 多 → 少"], ["containers-asc", "Docker 少 → 多"], ["disk-free-desc", "可用磁盘 多 → 少"], ["disk-free-asc", "可用磁盘 少 → 多"]]
+    : [["priority", "Operations priority"], ["region", "Region"], ["containers-desc", "Docker high → low"], ["containers-asc", "Docker low → high"], ["disk-free-desc", "Free disk high → low"], ["disk-free-asc", "Free disk low → high"]];
+  for (const [value, label] of sortOptions) appendFleetOption(sortControl, value, label);
+  sortControl.value = fleetView.sort;
+  sortControl.onchange = () => { fleetView.sort = sortControl.value; renderServers(); };
 }
 function appendCoverageStat(target, value, label) {
   const item = document.createElement("div"),
@@ -1163,6 +1243,13 @@ function renderFleetOverview(allDeployments, allRuntime) {
   board.replaceChildren();
   const groups = { healthy: [], unknown: [], attention: [] };
   for (const server of servers) groups[fleetState(server)].push(server);
+  configureFleetControls();
+  appendFleetCount(
+    distribution,
+    servers.length,
+    locale === "zh-CN" ? "全部" : "all",
+    "all",
+  );
   appendFleetCount(
     distribution,
     groups.healthy.length,
@@ -1200,7 +1287,18 @@ function renderFleetOverview(allDeployments, allRuntime) {
       billingLabel.textContent = locale === "zh-CN" ? "账单未验证 · 容量建议不包含价格推断" : "Billing unverified · capacity guidance excludes price assumptions";
     }
   }
-  for (const server of servers) {
+  const visibleServers = filteredFleetServers();
+  const resultLabel = $("#fleet-filter-result");
+  resultLabel.textContent = locale === "zh-CN"
+    ? `显示 ${visibleServers.length} / ${servers.length}`
+    : `Showing ${visibleServers.length} / ${servers.length}`;
+  if (!visibleServers.length) {
+    const empty = document.createElement("p");
+    empty.className = "fleet-server-board-empty";
+    empty.textContent = locale === "zh-CN" ? "没有符合当前筛选条件的服务器。" : "No servers match the current filters.";
+    board.append(empty);
+  }
+  for (const server of visibleServers) {
     const tile = document.createElement("a"),
       state = fleetState(server),
       coverage = server.runtime_coverage || {};
@@ -1424,16 +1522,19 @@ function renderFleetServerRecord(server) {
 }
 
 function renderFleetServices(server) {
-  const section = document.createElement("section"), heading = document.createElement("div"), title = document.createElement("h3"), note = document.createElement("p"), assets = server.runtime_assets || [], containers = assets.filter((item) => ["container", "runtime_container"].includes(item.kind)), projects = (server.runtime_projects || []).map((project) => ({ ...project, containers: containers.filter((container) => (container.metadata?.composeProject || container.name) === project.name) }));
+  const section = document.createElement("details"), summary = document.createElement("summary"), title = document.createElement("strong"), hint = document.createElement("span"), body = document.createElement("div"), note = document.createElement("p"), assets = server.runtime_assets || [], containers = assets.filter((item) => ["container", "runtime_container"].includes(item.kind)), projects = (server.runtime_projects || []).map((project) => ({ ...project, containers: containers.filter((container) => (container.metadata?.composeProject || container.name) === project.name) }));
   section.className = "fleet-record-section fleet-record-services";
-  heading.className = "fleet-project-usage-heading";
+  summary.className = "fleet-project-usage-summary";
+  body.className = "fleet-project-usage-body";
+  note.className = "fleet-project-usage-note";
   title.textContent = (locale === "zh-CN" ? "项目资源归因" : "Project resource attribution") + " · " + projects.length;
+  hint.textContent = locale === "zh-CN" ? "展开查看 CPU / RAM / 磁盘 / I/O" : "Expand for CPU / RAM / disk / I/O";
   note.textContent = locale === "zh-CN" ? "CPU 为瞬时采样；网络与块 I/O 为容器启动后累计；空间仅含容器可写层。" : "CPU is sampled; network and block I/O are cumulative since start; space is container writable layer only.";
-  heading.append(title, note); section.append(heading);
-  if (!projects.length) { const empty = document.createElement("p"); empty.className = "fleet-record-empty"; empty.textContent = locale === "zh-CN" ? "暂无可归因的运行项目。" : "No runtime project can be attributed yet."; section.append(empty); return section; }
+  summary.append(title, hint); body.append(note); section.append(summary, body);
+  if (!projects.length) { const empty = document.createElement("p"); empty.className = "fleet-record-empty"; empty.textContent = locale === "zh-CN" ? "暂无可归因的运行项目。" : "No runtime project can be attributed yet."; body.append(empty); return section; }
   const list = document.createElement("div"); list.className = "fleet-project-usage-list";
   for (const project of projects) list.append(renderProjectUsage(project));
-  section.append(list); return section;
+  body.append(list); return section;
 }
 
 function renderProjectUsage(project) {

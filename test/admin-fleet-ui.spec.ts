@@ -17,8 +17,8 @@ describe("admin fleet UI release contract", () => {
   });
 
   it("cache-busts the fleet assets with the same release key", () => {
-    expect(workspace).toContain("/admin-ops-v2.css?v=20260812-usage-1");
-    expect(workspace).toContain("/admin.js?v=20260812-usage-1");
+    expect(workspace).toContain("/admin-ops-v2.css?v=20260814-fleet-filter-1");
+    expect(workspace).toContain("/admin.js?v=20260814-fleet-filter-1");
   });
 
   it("uses one integrated server board without the duplicate cost grid", () => {
@@ -62,5 +62,17 @@ describe("admin fleet UI release contract", () => {
     expect(adminScript).toContain("project.lastCodeUpdateAt");
     expect(adminScript).toContain("project.lastSampleAt");
     expect(adminScript).toContain("空间仅含容器可写层");
+    expect(adminScript).toContain('document.createElement("details")');
+    expect(adminScript).toContain("fleet-project-usage-summary");
+  });
+
+  it("filters the canonical server board without refetching fleet data", () => {
+    expect(workspace).toContain('id="fleet-region-filter"');
+    expect(workspace).toContain('id="fleet-server-sort"');
+    expect(workspace).toContain('id="fleet-filter-result"');
+    expect(adminScript).toContain("serverAvailableDiskBytes");
+    expect(adminScript).toContain('"containers-desc"');
+    expect(adminScript).toContain('"disk-free-desc"');
+    expect(adminScript).toContain("filteredFleetServers");
   });
 });
