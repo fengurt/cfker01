@@ -98,7 +98,7 @@ export async function getAssetMap(env: Env): Promise<AssetMapSnapshot> {
       `SELECT id,name,provider,ip_address,architecture,cpu,memory_mb,disk_gb,operating_system,due_at,health_url,public_url,status,last_checked_at,updated_at FROM servers ORDER BY name`,
     ).all<Row>(),
     env.MGMT_DB.prepare(
-      `SELECT id,provider,account_id,kind,external_id,parent_external_id,name,status,region,url,server_id,project_id,metadata,last_seen_at,last_verified_at,updated_at FROM discovered_assets WHERE kind IN ('runtime_service','compose_project','runtime_container','container','dns_domain','dns_record','worker','pages_project','edgeone_zone','cos_bucket','r2_bucket') ORDER BY kind,name`,
+      `SELECT id,provider,account_id,kind,external_id,parent_external_id,name,status,region,url,server_id,project_id,metadata,last_seen_at,last_verified_at,updated_at FROM discovered_assets WHERE kind IN ('repository','project','skill','agent','runtime_service','compose_project','runtime_container','container','dns_domain','dns_record','worker','pages_project','edgeone_zone','cos_bucket','r2_bucket') ORDER BY kind,name`,
     ).all<Row>(),
     env.MGMT_DB.prepare(
       `SELECT id,source_asset_id,target_asset_id,project_id,relationship,confidence,status,evidence FROM resource_links WHERE status!='rejected' ORDER BY id`,
@@ -332,7 +332,119 @@ export async function getAssetMap(env: Env): Promise<AssetMapSnapshot> {
   }
 
   const assetNodeIds = new Map<string, string>();
+  const localRepositories: Array<{
+    path: string;
+    localId: string;
+    repositoryId: string | null;
+  }> = [];
+  const localSkills: Array<{ path: string; localId: string }> = [];
   for (const row of assets.results ?? []) {
+    const metadata = safeMetadata(row.metadata);
+    if (
+      text(row.provider) === "local" &&
+      ["repository", "project", "skill", "agent"].includes(text(row.kind))
+    ) {
+      const path =
+        text(metadata.absolutePath) ||
+        text(metadata.sourceRef) ||
+        text(row.external_id);
+      const nodeId = `local:${await digest(path)}`;
+      assetNodeIds.set(text(row.id), nodeId);
+      addNode({
+        id: nodeId,
+        kind: "local_path",
+        label: text(row.name) || path.split("/").filter(Boolean).at(-1) || path,
+        status:
+          text(row.kind) === "repository"
+            ? text(metadata.syncStatus) || text(row.status) || "unverified"
+            : text(row.status) || "discovered",
+        source: "scan",
+        updatedAt: nullableText(
+          metadata.sourceUpdatedAt ?? row.last_seen_at ?? row.updated_at,
+        ),
+        metadata: compact({
+          path,
+          scanRoot: metadata.scanRoot,
+          relativePath: metadata.relativePath,
+          resourceType: row.kind,
+          resourceTypes: metadata.resourceTypes,
+          frameworks: metadata.frameworks,
+          languages: metadata.languages,
+          repositoryUrl: metadata.repositoryUrl ?? row.url,
+          headSha: metadata.headSha,
+          githubHeadSha: metadata.githubHeadSha,
+          branch: metadata.branch,
+          dirty: metadata.dirty,
+          ahead: metadata.ahead,
+          behind: metadata.behind,
+          skillPaths: metadata.skillPaths,
+        }),
+      });
+      if (text(row.kind) === "skill") localSkills.push({ path, localId: nodeId });
+      if (text(row.kind) === "repository") {
+        const canonicalKey = repositoryKey(
+          text(metadata.repositoryUrl) || text(row.url),
+        );
+        const repositoryId = canonicalKey
+          ? `repository:${canonicalKey}`
+          : null;
+        localRepositories.push({ path, localId: nodeId, repositoryId });
+        if (repositoryId) {
+          if (!nodes.has(repositoryId))
+            addNode({
+              id: repositoryId,
+              kind: "repository",
+              label: canonicalKey!.replace(/^github\.com\//, ""),
+              status: text(metadata.syncStatus) || "unverified",
+              source: "scan",
+              updatedAt: nullableText(row.last_seen_at ?? row.updated_at),
+              metadata: compact({
+                canonicalKey,
+                repositoryUrl: metadata.repositoryUrl ?? row.url,
+                headSha: metadata.headSha,
+                githubHeadSha: metadata.githubHeadSha,
+                branch: metadata.branch,
+              }),
+            });
+          addEdge({
+            source: nodeId,
+            target: repositoryId,
+            relationship: "syncs_to",
+            status: "confirmed",
+            confidence: 1,
+            sourceType: "scanner",
+            evidence: [
+              "discovered_assets.metadata.repositoryUrl",
+              `sync_status:${text(metadata.syncStatus) || "unverified"}`,
+            ],
+          });
+        }
+      }
+      continue;
+    }
+    if (text(row.provider) === "github" && text(row.kind) === "repository") {
+      const canonicalKey = repositoryKey(text(row.url));
+      if (canonicalKey) {
+        const nodeId = `repository:${canonicalKey}`;
+        assetNodeIds.set(text(row.id), nodeId);
+        if (!nodes.has(nodeId))
+          addNode({
+            id: nodeId,
+            kind: "repository",
+            label: text(row.name) || canonicalKey.replace(/^github\.com\//, ""),
+            status: text(row.status) || "unknown",
+            source: "scan",
+            updatedAt: nullableText(row.last_seen_at ?? row.updated_at),
+            metadata: compact({
+              canonicalKey,
+              repositoryUrl: row.url,
+              accountId: row.account_id,
+              ...metadata,
+            }),
+          });
+        continue;
+      }
+    }
     const kind = assetKind(text(row.kind));
     const nodeId =
       kind === "endpoint" && row.url
@@ -357,7 +469,7 @@ export async function getAssetMap(env: Env): Promise<AssetMapSnapshot> {
           parentExternalId: row.parent_external_id,
           region: row.region,
           url: row.url,
-          ...safeMetadata(row.metadata),
+          ...metadata,
         }),
       });
     if (row.server_id)
@@ -380,6 +492,25 @@ export async function getAssetMap(env: Env): Promise<AssetMapSnapshot> {
         sourceType: "scanner",
         evidence: ["discovered_assets.project_id"],
       });
+  }
+
+  localRepositories.sort((a, b) => b.path.length - a.path.length);
+  for (const skill of localSkills) {
+    const owner = localRepositories.find(
+      (repository) =>
+        skill.path === `${repository.path}/SKILL.md` ||
+        skill.path.startsWith(`${repository.path}/`),
+    );
+    if (!owner) continue;
+    addEdge({
+      source: owner.repositoryId || owner.localId,
+      target: skill.localId,
+      relationship: "contains_skill",
+      status: "confirmed",
+      confidence: 1,
+      sourceType: "derived",
+      evidence: ["tracked SKILL.md path within canonical repository"],
+    });
   }
 
   for (const row of scannerLinks.results ?? []) {
@@ -808,6 +939,23 @@ function repositoryLabel(row: Row): string {
   return row.github_owner && row.github_repo
     ? `${row.github_owner}/${row.github_repo}`
     : text(row.canonical_key);
+}
+function repositoryKey(value: string): string | null {
+  if (!value) return null;
+  const normalized = value
+    .trim()
+    .replace(/^git@([^:]+):/, "https://$1/")
+    .replace(/^ssh:\/\/git@/, "https://")
+    .replace(/\.git$/i, "");
+  try {
+    const url = new URL(normalized);
+    const path = url.pathname.replace(/^\/+|\/+$/g, "");
+    return path.split("/").length >= 2
+      ? `${url.hostname.toLowerCase()}/${path.toLowerCase()}`
+      : null;
+  } catch {
+    return null;
+  }
 }
 function assetKind(kind: string): AssetMapNodeKind {
   if (

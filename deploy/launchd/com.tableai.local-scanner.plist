@@ -12,7 +12,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>WORKER_URL</key><string>https://g.ksamint.cn</string>
-    <key>LOCAL_SCAN_ROOT</key><string>/Users/af/cpro01</string>
+    <key>LOCAL_SCAN_ROOTS</key><string>/Users/af/cpro01;/Users/af/Documents</string>
     <key>PATH</key><string>__PATH__</string>
   </dict>
   <key>StartInterval</key><integer>900</integer>
