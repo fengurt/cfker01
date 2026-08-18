@@ -7,6 +7,8 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 18px;
+  height: auto;
+  min-height: 82px;
   padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -47,10 +49,9 @@
 }
 .asset-map-filters {
   display: grid;
-  grid-template-columns: minmax(260px, 1.6fr) minmax(150px, 0.6fr) minmax(
-      150px,
-      0.6fr
-    ) auto;
+  grid-template-columns:
+    minmax(240px, 1.5fr) minmax(140px, 0.55fr) minmax(140px, 0.55fr)
+    auto minmax(185px, 0.8fr);
   align-items: end;
   gap: 8px;
   padding: 10px 12px;
@@ -65,6 +66,37 @@
 .asset-map-filters label > span {
   color: var(--muted);
   font-size: 0.64rem;
+}
+.asset-map-mode {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 3px;
+  min-width: 0;
+  margin: 0;
+  padding: 18px 3px 3px;
+  border: 0;
+}
+.asset-map-mode legend {
+  position: absolute;
+  color: var(--muted);
+  font-size: 0.64rem;
+  transform: translateY(-15px);
+}
+.asset-map-mode button {
+  min-height: 31px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 750;
+}
+.asset-map-mode button[aria-pressed="true"] {
+  border-color: var(--line-strong);
+  background: var(--panel);
+  color: var(--text);
 }
 .asset-map-filters output {
   align-self: center;
@@ -113,13 +145,153 @@
   background: var(--panel);
 }
 .asset-map-canvas {
+  position: relative;
+  min-width: 0;
+  overflow: auto;
+  background: var(--panel-subtle);
+}
+.asset-map-canvas.is-list {
   display: grid;
   grid-template-columns: repeat(7, minmax(148px, 1fr));
   align-items: start;
-  min-width: 0;
-  overflow: auto;
   background: var(--line);
   gap: 1px;
+}
+.asset-map-canvas.is-topology {
+  display: block;
+  min-height: 600px;
+}
+.asset-map-topology-stage {
+  position: relative;
+  min-width: 1260px;
+  min-height: 600px;
+  isolation: isolate;
+}
+.asset-map-links {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.asset-map-link {
+  fill: none;
+  stroke: color-mix(in srgb, var(--muted) 38%, transparent);
+  stroke-width: 1.15;
+  vector-effect: non-scaling-stroke;
+}
+.asset-map-arrow {
+  fill: color-mix(in srgb, var(--muted) 58%, transparent);
+}
+.asset-map-link.is-candidate {
+  stroke-dasharray: 5 5;
+  opacity: 0.65;
+}
+.asset-map-link.is-selected {
+  stroke: var(--accent);
+  stroke-width: 2.4;
+  opacity: 1;
+}
+.asset-map-topology-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(164px, 1fr));
+  gap: 18px;
+  min-height: 600px;
+  padding: 0 12px 18px;
+}
+.asset-map-topology-lane {
+  min-width: 0;
+}
+.asset-map-topology-lane > h3 {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 -4px 9px;
+  padding: 11px 6px 9px;
+  border-bottom: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--panel-subtle) 94%, transparent);
+  color: var(--muted);
+  font:
+    750 0.62rem/1.2 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.asset-map-topology-lane > h3 strong {
+  color: var(--text);
+}
+.asset-map-topology-nodes {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+}
+.asset-map-topology-node {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 7px;
+  width: 100%;
+  min-height: 52px;
+  padding: 7px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--line) 55%, transparent);
+}
+.asset-map-topology-node:hover,
+.asset-map-topology-node:focus-visible,
+.asset-map-topology-node[data-related] {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 65%, var(--panel));
+}
+.asset-map-topology-node[aria-current="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 var(--accent);
+  background: var(--accent-soft);
+}
+.asset-map-topology-node strong,
+.asset-map-topology-node small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asset-map-topology-node strong {
+  font-size: 0.66rem;
+}
+.asset-map-topology-node small {
+  grid-column: 1;
+  color: var(--muted);
+  font:
+    500 0.54rem/1.25 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.asset-map-topology-node em {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--muted);
+  font:
+    750 0.57rem/1 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.asset-map-topology-empty {
+  margin: 0;
+  padding: 12px 6px;
+  color: var(--muted);
+  font-size: 0.6rem;
+  text-align: center;
 }
 .asset-map-lane {
   display: grid;
@@ -390,7 +562,7 @@
   .asset-map-summary {
     grid-template-columns: repeat(3, 1fr);
   }
-  .asset-map-canvas {
+  .asset-map-canvas.is-list {
     min-height: 420px;
   }
   .asset-map-editor form {
@@ -417,7 +589,7 @@
   .asset-map-metric:nth-child(odd) {
     border-left: 0;
   }
-  .asset-map-canvas {
+  .asset-map-canvas.is-list {
     grid-template-columns: repeat(7, minmax(132px, 1fr));
   }
   .asset-map-editor form {

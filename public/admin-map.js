@@ -1,6 +1,14 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
-  const state = { map: null, selected: null, loaded: false };
+  const TOPOLOGY_NODE_LIMIT = 84;
+  const TOPOLOGY_LANE_LIMIT = 14;
+  const state = {
+    map: null,
+    selected: null,
+    loaded: false,
+    mode: "topology",
+    topologyObserver: null,
+  };
   const laneDefinitions = [
     ["local_path", "本地 Git"],
     ["repository", "GitHub"],
@@ -64,17 +72,25 @@
         (!edgeStatus || related.has(node.id)) &&
         (!query || searchable(node).includes(query)),
     );
-    const visibleIds = new Set(nodes.map((node) => node.id));
-    const edgeCount = matchingEdges.filter(
-      (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target),
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const directEdgeCount = matchingEdges.filter(
+      (edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target),
     ).length;
-    renderSummary(nodes, edgeCount);
-    renderLanes(nodes);
+    renderSummary(nodes, directEdgeCount);
+    const display =
+      state.mode === "topology"
+        ? renderTopology(nodes, matchingEdges, { query, kind })
+        : renderLanes(nodes);
     $("#asset-map-filter-result").textContent =
-      `${nodes.length} / ${state.map.nodes.length} 节点，${edgeCount} 条当前关系`;
-    if (state.selected && visibleIds.has(state.selected))
+      state.mode === "topology"
+        ? `当前映射 ${display.nodeCount} 个节点、${display.edgeCount} 条关系；完整图 ${state.map.nodes.length} 个节点、${matchingEdges.length} 条关系`
+        : `${nodes.length} / ${state.map.nodes.length} 节点，${directEdgeCount} 条当前关系`;
+    if (
+      state.selected &&
+      state.map.nodes.some((node) => node.id === state.selected)
+    )
       renderInspector(state.selected);
-    else if (state.selected) clearInspector();
+    else clearInspector();
   }
 
   function renderSummary(nodes, edgeCount) {
@@ -105,6 +121,9 @@
 
   function renderLanes(nodes) {
     const canvas = $("#asset-map-canvas");
+    state.topologyObserver?.disconnect();
+    state.topologyObserver = null;
+    canvas.className = "asset-map-canvas is-list";
     canvas.replaceChildren();
     for (const [kindList, label] of laneDefinitions) {
       const kinds = new Set(kindList.split(",")),
@@ -138,6 +157,298 @@
         );
       canvas.append(lane);
     }
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    return {
+      nodeCount: nodes.length,
+      edgeCount: state.map.edges.filter(
+        (edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target),
+      ).length,
+    };
+  }
+
+  function renderTopology(nodes, matchingEdges, context) {
+    const canvas = $("#asset-map-canvas");
+    state.topologyObserver?.disconnect();
+    canvas.className = "asset-map-canvas is-topology";
+    canvas.replaceChildren();
+
+    const topology = topologyNeighborhood(nodes, matchingEdges, context);
+    const stage = element("div", "asset-map-topology-stage");
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.classList.add("asset-map-links");
+    svg.setAttribute("aria-hidden", "true");
+    const grid = element("div", "asset-map-topology-grid");
+    const nodeElements = new Map();
+    const degree = degreeMap(matchingEdges);
+
+    for (const [kindList, label] of laneDefinitions) {
+      const kinds = new Set(kindList.split(","));
+      const laneNodes = topology.nodes
+        .filter((node) => kinds.has(node.kind))
+        .sort(
+          (a, b) =>
+            Number(b.id === state.selected) - Number(a.id === state.selected) ||
+            (degree.get(b.id) || 0) - (degree.get(a.id) || 0) ||
+            a.label.localeCompare(b.label),
+        )
+        .slice(0, TOPOLOGY_LANE_LIMIT);
+      const lane = element("section", "asset-map-topology-lane");
+      lane.append(
+        element("h3", "", [
+          element("span", "", label),
+          element("strong", "", String(laneNodes.length)),
+        ]),
+      );
+      const list = element("div", "asset-map-topology-nodes");
+      for (const node of laneNodes) {
+        const button = element("button", "asset-map-topology-node");
+        button.type = "button";
+        button.setAttribute("data-topology-node-id", node.id);
+        button.setAttribute("aria-current", String(state.selected === node.id));
+        button.setAttribute(
+          "aria-label",
+          `${kindLabel(node.kind)} ${node.label}，${degree.get(node.id) || 0} 条关系`,
+        );
+        button.append(
+          element("strong", "", node.label),
+          element("small", "", nodeSubtitle(node)),
+          element("em", "", String(degree.get(node.id) || 0)),
+        );
+        nodeElements.set(node.id, button);
+        list.append(button);
+      }
+      if (!laneNodes.length)
+        list.append(element("p", "asset-map-topology-empty", "暂无映射"));
+      lane.append(list);
+      grid.append(lane);
+    }
+
+    stage.append(svg, grid);
+    canvas.append(stage);
+    const draw = () =>
+      drawTopologyEdges(stage, svg, topology.edges, nodeElements);
+    requestAnimationFrame(draw);
+    if (typeof ResizeObserver === "function") {
+      state.topologyObserver = new ResizeObserver(() =>
+        requestAnimationFrame(draw),
+      );
+      state.topologyObserver.observe(stage);
+    }
+    return {
+      nodeCount: nodeElements.size,
+      edgeCount: topology.edges.filter(
+        (edge) =>
+          nodeElements.has(edge.source) && nodeElements.has(edge.target),
+      ).length,
+    };
+  }
+
+  function topologyNeighborhood(nodes, edges, context) {
+    const nodeById = new Map(state.map.nodes.map((node) => [node.id, node]));
+    const degree = degreeMap(edges);
+    const anchors = [...nodes].sort(
+      (a, b) =>
+        Number(b.id === state.selected) - Number(a.id === state.selected) ||
+        (degree.get(b.id) || 0) - (degree.get(a.id) || 0),
+    );
+    const selectedIds = new Set();
+    const laneCounts = new Map();
+    const canAdd = (id) => {
+      if (selectedIds.has(id)) return true;
+      const node = nodeById.get(id);
+      if (!node || selectedIds.size >= TOPOLOGY_NODE_LIMIT) return false;
+      const lane = laneIndex(node.kind);
+      return (laneCounts.get(lane) || 0) < TOPOLOGY_LANE_LIMIT;
+    };
+    const add = (id) => {
+      if (!canAdd(id) || selectedIds.has(id)) return false;
+      const lane = laneIndex(nodeById.get(id).kind);
+      selectedIds.add(id);
+      laneCounts.set(lane, (laneCounts.get(lane) || 0) + 1);
+      return true;
+    };
+    const addPair = (source, target) => {
+      const pending = [...new Set([source, target])].filter(
+        (id) => !selectedIds.has(id),
+      );
+      if (
+        pending.some((id) => !nodeById.has(id)) ||
+        selectedIds.size + pending.length > TOPOLOGY_NODE_LIMIT
+      )
+        return false;
+      const neededByLane = new Map();
+      for (const id of pending) {
+        const lane = laneIndex(nodeById.get(id).kind);
+        neededByLane.set(lane, (neededByLane.get(lane) || 0) + 1);
+      }
+      if (
+        [...neededByLane].some(
+          ([lane, needed]) =>
+            (laneCounts.get(lane) || 0) + needed > TOPOLOGY_LANE_LIMIT,
+        )
+      )
+        return false;
+      const before = selectedIds.size;
+      for (const id of pending) add(id);
+      return selectedIds.size > before;
+    };
+
+    if (state.selected) {
+      add(state.selected);
+      let frontier = new Set([state.selected]);
+      for (let depth = 0; depth < 2 && frontier.size; depth++) {
+        const next = new Set();
+        for (const edge of edges) {
+          if (frontier.has(edge.source)) {
+            add(edge.target);
+            next.add(edge.target);
+          }
+          if (frontier.has(edge.target)) {
+            add(edge.source);
+            next.add(edge.source);
+          }
+        }
+        frontier = next;
+      }
+    } else if (context.query || context.kind) {
+      for (const node of anchors.slice(0, 28)) add(node.id);
+      expandOneHop(selectedIds, edges, degree, add);
+    } else {
+      const pairQueues = new Map();
+      for (const edge of edges) {
+        const source = nodeById.get(edge.source),
+          target = nodeById.get(edge.target);
+        if (!source || !target) continue;
+        const pair = [laneIndex(source.kind), laneIndex(target.kind)]
+          .sort((a, b) => a - b)
+          .join(":");
+        if (!pairQueues.has(pair)) pairQueues.set(pair, []);
+        pairQueues.get(pair).push(edge);
+      }
+      for (const queue of pairQueues.values())
+        queue.sort(
+          (a, b) =>
+            (degree.get(b.source) || 0) +
+            (degree.get(b.target) || 0) -
+            (degree.get(a.source) || 0) -
+            (degree.get(a.target) || 0),
+        );
+      let added = true;
+      while (added && selectedIds.size < TOPOLOGY_NODE_LIMIT) {
+        added = false;
+        for (const queue of pairQueues.values()) {
+          const edge = queue.shift();
+          if (!edge) continue;
+          added = addPair(edge.source, edge.target) || added;
+          if (selectedIds.size >= TOPOLOGY_NODE_LIMIT) break;
+        }
+      }
+    }
+
+    const selectedNodes = [...selectedIds]
+      .map((id) => nodeById.get(id))
+      .filter(Boolean);
+    const visibleIds = new Set(selectedNodes.map((node) => node.id));
+    return {
+      nodes: selectedNodes,
+      edges: edges.filter(
+        (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target),
+      ),
+    };
+  }
+
+  function expandOneHop(selectedIds, edges, degree, add) {
+    const candidates = [];
+    for (const edge of edges) {
+      if (selectedIds.has(edge.source) && !selectedIds.has(edge.target))
+        candidates.push([edge.target, degree.get(edge.target) || 0]);
+      if (selectedIds.has(edge.target) && !selectedIds.has(edge.source))
+        candidates.push([edge.source, degree.get(edge.source) || 0]);
+    }
+    for (const [id] of candidates.sort((a, b) => b[1] - a[1])) add(id);
+  }
+
+  function degreeMap(edges) {
+    const degree = new Map();
+    for (const edge of edges) {
+      degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
+      degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
+    }
+    return degree;
+  }
+
+  function laneIndex(kind) {
+    return laneDefinitions.findIndex(([kindList]) =>
+      kindList.split(",").includes(kind),
+    );
+  }
+
+  function drawTopologyEdges(stage, svg, edges, nodeElements) {
+    svg.replaceChildren();
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    const marker = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "marker",
+    );
+    marker.id = "asset-map-arrow";
+    marker.setAttribute("viewBox", "0 0 8 8");
+    marker.setAttribute("refX", "7");
+    marker.setAttribute("refY", "4");
+    marker.setAttribute("markerWidth", "5");
+    marker.setAttribute("markerHeight", "5");
+    marker.setAttribute("orient", "auto");
+    const arrow = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "path",
+    );
+    arrow.setAttribute("d", "M 0 0 L 8 4 L 0 8 z");
+    arrow.classList.add("asset-map-arrow");
+    marker.append(arrow);
+    defs.append(marker);
+    svg.append(defs);
+    const stageRect = stage.getBoundingClientRect();
+    const width = Math.max(stage.scrollWidth, stage.clientWidth);
+    const height = Math.max(stage.scrollHeight, stage.clientHeight);
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
+    for (const edge of edges) {
+      const source = nodeElements.get(edge.source);
+      const target = nodeElements.get(edge.target);
+      if (!source || !target) continue;
+      const sourceRect = source.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const forward = sourceRect.left <= targetRect.left;
+      const x1 =
+        (forward ? sourceRect.right : sourceRect.left) - stageRect.left;
+      const x2 =
+        (forward ? targetRect.left : targetRect.right) - stageRect.left;
+      const y1 = sourceRect.top + sourceRect.height / 2 - stageRect.top;
+      const y2 = targetRect.top + targetRect.height / 2 - stageRect.top;
+      const bend = Math.max(28, Math.abs(x2 - x1) * 0.42);
+      const path = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "path",
+      );
+      path.setAttribute(
+        "d",
+        `M ${x1} ${y1} C ${x1 + (forward ? bend : -bend)} ${y1}, ${x2 - (forward ? bend : -bend)} ${y2}, ${x2} ${y2}`,
+      );
+      path.classList.add("asset-map-link");
+      path.setAttribute("marker-end", "url(#asset-map-arrow)");
+      path.classList.toggle("is-candidate", edge.status === "candidate");
+      path.classList.toggle(
+        "is-selected",
+        edge.source === state.selected || edge.target === state.selected,
+      );
+      const title = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "title",
+      );
+      title.textContent = `${edge.relationship} / ${edge.status}`;
+      path.append(title);
+      svg.append(path);
+    }
   }
 
   function renderInspector(nodeId) {
@@ -149,17 +460,16 @@
         .filter((edge) => edge.source === nodeId || edge.target === nodeId)
         .flatMap((edge) => [edge.source, edge.target]),
     );
-    document.querySelectorAll(".asset-map-node").forEach((button) => {
-      button.setAttribute(
-        "aria-current",
-        String(button.dataset.nodeId === nodeId),
-      );
-      button.toggleAttribute(
-        "data-related",
-        relatedIds.has(button.dataset.nodeId) &&
-          button.dataset.nodeId !== nodeId,
-      );
-    });
+    document
+      .querySelectorAll(".asset-map-node,.asset-map-topology-node")
+      .forEach((button) => {
+        const buttonId = button.dataset.nodeId || button.dataset.topologyNodeId;
+        button.setAttribute("aria-current", String(buttonId === nodeId));
+        button.toggleAttribute(
+          "data-related",
+          relatedIds.has(buttonId) && buttonId !== nodeId,
+        );
+      });
     const inspector = $("#asset-map-inspector");
     inspector.replaceChildren();
     const title = element("h3", "", node.label);
@@ -293,12 +603,19 @@
   }
 
   $("#asset-map-canvas")?.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-node-id]");
-    if (button) renderInspector(button.dataset.nodeId);
+    const button = event.target.closest(
+      "button[data-node-id],button[data-topology-node-id]",
+    );
+    if (!button) return;
+    const nodeId = button.dataset.nodeId || button.dataset.topologyNodeId;
+    state.selected = state.selected === nodeId ? null : nodeId;
+    render();
   });
   $("#asset-map-inspector")?.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-related-node]");
-    if (button) renderInspector(button.dataset.relatedNode);
+    if (!button) return;
+    state.selected = button.dataset.relatedNode;
+    render();
   });
   $("#asset-map-inspector")?.addEventListener("submit", async (event) => {
     const form = event.target.closest(".asset-map-annotation-form");
@@ -346,6 +663,20 @@
     }
   });
   $("#asset-map-filters")?.addEventListener("input", render);
+  $("#asset-map-filters")?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-map-mode]");
+    if (!button) return;
+    state.mode = button.dataset.mapMode;
+    document
+      .querySelectorAll("button[data-map-mode]")
+      .forEach((item) =>
+        item.setAttribute(
+          "aria-pressed",
+          String(item.dataset.mapMode === state.mode),
+        ),
+      );
+    render();
+  });
   $("#asset-map-refresh")?.addEventListener("click", () => loadAssetMap(true));
   $("#asset-map-snapshot")?.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
