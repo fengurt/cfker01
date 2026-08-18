@@ -9,6 +9,7 @@ import worker from "../src/index";
 import {
   createAssetMapVersion,
   ensurePeriodicAssetMapVersion,
+  getAssetMapVersion,
 } from "../src/lib/asset-map";
 
 const adminHeaders = {
@@ -239,6 +240,49 @@ describe("versioned live asset map", () => {
       `SELECT COUNT(*) count FROM asset_map_versions WHERE reason='scheduled'`,
     ).first<{ count: number }>();
     expect(changed?.count).toBe(Number(before?.count ?? 0) + 1);
+  });
+
+  it("chunks and reconstructs large snapshots without losing Unicode data", async () => {
+    const suffix = crypto.randomUUID().slice(0, 8),
+      now = new Date().toISOString(),
+      longLabel = `大型资产-${suffix}-${"测".repeat(4_000)}`,
+      statements = Array.from({ length: 180 }, (_, index) =>
+        env.MGMT_DB.prepare(
+          `INSERT INTO discovered_assets(id,provider,account_id,kind,external_id,name,status,metadata,first_seen_at,last_seen_at,created_at,updated_at) VALUES(?1,'test','default','worker',?1,?2,'active','{}',?3,?3,?3,?3)`,
+        ).bind(
+          `large-map-${suffix}-${index}`,
+          `${longLabel}-${index}`,
+          now,
+        ),
+      );
+    for (let index = 0; index < statements.length; index += 50)
+      await env.MGMT_DB.batch(statements.slice(index, index + 50));
+
+    const version = await createAssetMapVersion(
+      env,
+      { type: "admin", id: "large-map-test" },
+      "manual",
+      "Large map regression",
+      true,
+    );
+    const chunks = await env.MGMT_DB.prepare(
+      `SELECT COUNT(*) count,MAX(length(content)) max_length FROM asset_map_version_chunks WHERE version_id=?1`,
+    )
+      .bind(version.id)
+      .first<{ count: number; max_length: number }>();
+    expect(Number(chunks?.count)).toBeGreaterThan(1);
+    expect(Number(chunks?.max_length)).toBeLessThanOrEqual(64 * 1024);
+
+    const restored = await getAssetMapVersion(env, String(version.id));
+    const snapshot = restored?.snapshot as {
+      nodes: Array<{ id: string; label: string }>;
+    };
+    expect(
+      snapshot.nodes.find(
+        (node) => node.id === `asset:large-map-${suffix}-179`,
+      )
+        ?.label,
+    ).toBe(`${longLabel}-179`);
   });
 
   it("exposes scoped MCP read and write interfaces", async () => {

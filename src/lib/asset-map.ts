@@ -1,6 +1,8 @@
 const ASSET_MAP_SCHEMA_VERSION = "1.0";
 const PERIODIC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const SCHEDULED_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const SNAPSHOT_CHUNK_FORMAT = "chunked-json-v1";
+const SNAPSHOT_CHUNK_CHARS = 64 * 1024;
 
 export type AssetMapNodeKind =
   | "local_path"
@@ -444,25 +446,37 @@ export async function createAssetMapVersion(
     return { ...latest, skipped: true, reason: "unchanged" };
   const id = `mapv_${crypto.randomUUID()}`;
   const createdAt = new Date().toISOString();
+  const snapshotJson = JSON.stringify(snapshot);
+  const snapshotChunks = chunkSnapshot(snapshotJson);
+  const snapshotManifest = JSON.stringify({
+    format: SNAPSHOT_CHUNK_FORMAT,
+    chunkCount: snapshotChunks.length,
+    contentLength: snapshotJson.length,
+  });
   let version = Number(latest?.version ?? 0) + 1;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await env.MGMT_DB.prepare(
-        `INSERT INTO asset_map_versions(id,version,schema_version,content_hash,reason,snapshot,summary,actor_type,actor_id,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`,
-      )
-        .bind(
+      await env.MGMT_DB.batch([
+        env.MGMT_DB.prepare(
+          `INSERT INTO asset_map_versions(id,version,schema_version,content_hash,reason,snapshot,summary,actor_type,actor_id,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`,
+        ).bind(
           id,
           version,
           ASSET_MAP_SCHEMA_VERSION,
           snapshot.fingerprint,
           clean(reason, 40),
-          JSON.stringify(snapshot),
+          snapshotManifest,
           clean(summary, 500),
           actor.type,
           clean(actor.id, 200),
           createdAt,
-        )
-        .run();
+        ),
+        ...snapshotChunks.map((content, chunkIndex) =>
+          env.MGMT_DB.prepare(
+            `INSERT INTO asset_map_version_chunks(version_id,chunk_index,content) VALUES(?1,?2,?3)`,
+          ).bind(id, chunkIndex, content),
+        ),
+      ]);
       break;
     } catch (error) {
       if (attempt === 2 || !String(error).includes("UNIQUE")) throw error;
@@ -508,7 +522,9 @@ export async function listAssetMapVersions(
   limit = 50,
 ): Promise<Record<string, unknown>[]> {
   const rows = await env.MGMT_DB.prepare(
-    `SELECT id,version,schema_version,content_hash,reason,summary,actor_type,actor_id,created_at,length(snapshot) snapshot_bytes FROM asset_map_versions ORDER BY version DESC LIMIT ?1`,
+    `SELECT id,version,schema_version,content_hash,reason,summary,actor_type,actor_id,created_at,
+      COALESCE((SELECT SUM(length(content)) FROM asset_map_version_chunks WHERE version_id=asset_map_versions.id),length(snapshot)) snapshot_bytes
+      FROM asset_map_versions ORDER BY version DESC LIMIT ?1`,
   )
     .bind(Math.min(200, Math.max(1, limit)))
     .all<Row>();
@@ -535,6 +551,7 @@ export async function getAssetMapVersion(
   )
     .bind(id)
     .first<Row>();
+  const snapshot = row ? await readVersionSnapshot(env, row) : null;
   return row
     ? {
         id: row.id,
@@ -546,7 +563,7 @@ export async function getAssetMapVersion(
         actorType: row.actor_type,
         actorId: row.actor_id,
         createdAt: row.created_at,
-        snapshot: parseJson(row.snapshot, null),
+        snapshot,
       }
     : null;
 }
@@ -931,6 +948,50 @@ function parseJson(value: unknown, fallback: any): any {
   } catch {
     return fallback;
   }
+}
+function chunkSnapshot(snapshot: string): string[] {
+  const chunks: string[] = [];
+  for (let start = 0; start < snapshot.length; ) {
+    let end = Math.min(snapshot.length, start + SNAPSHOT_CHUNK_CHARS);
+    if (
+      end < snapshot.length &&
+      snapshot.charCodeAt(end - 1) >= 0xd800 &&
+      snapshot.charCodeAt(end - 1) <= 0xdbff
+    )
+      end--;
+    chunks.push(snapshot.slice(start, end));
+    start = end;
+  }
+  return chunks.length ? chunks : [""];
+}
+async function readVersionSnapshot(env: Env, row: Row): Promise<unknown> {
+  const stored = parseJson(row.snapshot, null);
+  if (
+    !stored ||
+    typeof stored !== "object" ||
+    stored.format !== SNAPSHOT_CHUNK_FORMAT
+  )
+    return stored;
+  const chunkCount = Number(stored.chunkCount);
+  if (!Number.isInteger(chunkCount) || chunkCount < 1)
+    throw new Error("asset_map_version_incomplete");
+  const result = await env.MGMT_DB.prepare(
+    `SELECT chunk_index,content FROM asset_map_version_chunks WHERE version_id=?1 ORDER BY chunk_index`,
+  )
+    .bind(row.id)
+    .all<Row>();
+  const chunks = result.results ?? [];
+  if (
+    chunks.length !== chunkCount ||
+    chunks.some((chunk, index) => Number(chunk.chunk_index) !== index)
+  )
+    throw new Error("asset_map_version_incomplete");
+  const content = chunks.map((chunk) => text(chunk.content)).join("");
+  if (content.length !== Number(stored.contentLength))
+    throw new Error("asset_map_version_incomplete");
+  const snapshot = parseJson(content, null);
+  if (!snapshot) throw new Error("asset_map_version_incomplete");
+  return snapshot;
 }
 function jsonArray(value: unknown): unknown[] {
   const parsed = parseJson(value, []);
