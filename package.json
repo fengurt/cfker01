@@ -28,7 +28,7 @@
     "key:create": "node scripts/key-create-cli.mjs",
     "content:validate": "node scripts/validate-content.mjs",
     "ops:validate": "node scripts/validate-operations-spec.mjs",
-    "projects:scan": "node scripts/scan-local-projects.mjs /Users/af/cpro01",
+    "projects:scan": "node scripts/scan-local-projects.mjs /Users/af/cpro01 /Users/af/Documents",
     "repos:audit": "node scripts/repository-audit.mjs",
     "assets:discover": "node scripts/discover-assets.mjs",
     "scanner:central": "node scripts/scanner-loop.mjs",

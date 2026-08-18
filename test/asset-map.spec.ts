@@ -211,6 +211,82 @@ describe("versioned live asset map", () => {
     await waitOnExecutionContext(ctx);
   });
 
+  it("maps multi-root local repositories and tracked skills to GitHub", async () => {
+    const suffix = crypto.randomUUID().slice(0, 8),
+      now = new Date().toISOString(),
+      repositoryPath = `/Users/af/Documents/repo-${suffix}`,
+      skillPath = `${repositoryPath}/.agents/skills/review/SKILL.md`,
+      repositoryUrl = `https://github.com/example/repo-${suffix}`;
+    await env.MGMT_DB.batch([
+      env.MGMT_DB.prepare(
+        `INSERT INTO discovered_assets(id,provider,account_id,kind,external_id,name,status,url,metadata,first_seen_at,last_seen_at,created_at,updated_at) VALUES(?1,'local','cpro01','repository',?1,?2,'available',?3,?4,?5,?5,?5,?5)`,
+      ).bind(
+        `local-repo-${suffix}`,
+        `repo-${suffix}`,
+        repositoryUrl,
+        JSON.stringify({
+          absolutePath: repositoryPath,
+          scanRoot: "/Users/af/Documents",
+          repositoryUrl,
+          syncStatus: "synced",
+          headSha: "abc123",
+        }),
+        now,
+      ),
+      env.MGMT_DB.prepare(
+        `INSERT INTO discovered_assets(id,provider,account_id,kind,external_id,name,status,metadata,first_seen_at,last_seen_at,created_at,updated_at) VALUES(?1,'local','cpro01','skill',?1,'review','available',?2,?3,?3,?3,?3)`,
+      ).bind(
+        `local-skill-${suffix}`,
+        JSON.stringify({
+          absolutePath: skillPath,
+          scanRoot: "/Users/af/Documents",
+          resourceTypes: ["skill"],
+          frameworks: ["Agent Skill"],
+        }),
+        now,
+      ),
+      env.MGMT_DB.prepare(
+        `INSERT INTO discovered_assets(id,provider,account_id,kind,external_id,name,status,url,metadata,first_seen_at,last_seen_at,created_at,updated_at) VALUES(?1,'github','example','repository',?1,?2,'active',?3,'{}',?4,?4,?4,?4)`,
+      ).bind(
+        `github-repo-${suffix}`,
+        `example/repo-${suffix}`,
+        repositoryUrl,
+        now,
+      ),
+    ]);
+    const ctx = createExecutionContext();
+    const response = await call(
+      "/api/admin/v1/asset-map",
+      { headers: adminHeaders },
+      ctx,
+    );
+    const body = (await response.json()) as {
+      data: {
+        nodes: Array<{ kind: string; metadata: { path?: string } }>;
+        edges: Array<{ relationship: string }>;
+      };
+    };
+    expect(body.data.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "local_path",
+          metadata: expect.objectContaining({ path: repositoryPath }),
+        }),
+        expect.objectContaining({
+          kind: "local_path",
+          metadata: expect.objectContaining({ path: skillPath }),
+        }),
+      ]),
+    );
+    expect(body.data.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ relationship: "syncs_to" }),
+        expect.objectContaining({ relationship: "contains_skill" }),
+      ]),
+    );
+    await waitOnExecutionContext(ctx);
+  });
+
   it("creates a scheduled snapshot only after scanner facts change", async () => {
     await createAssetMapVersion(
       env,

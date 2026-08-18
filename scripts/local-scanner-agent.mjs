@@ -15,6 +15,7 @@ const base = process.env.WORKER_URL || "https://g.ksamint.cn";
 const key = process.env.SCANNER_KEY || await keychainKey();
 if (!key) throw new Error("Local scanner key is unavailable in the macOS Keychain");
 const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+const scanRoots = String(process.env.LOCAL_SCAN_ROOTS || process.env.LOCAL_SCAN_ROOT || "/Users/af/cpro01;/Users/af/Documents").split(/[;,\n]/).map(value => value.trim()).filter(Boolean);
 await mkdir(resolve(cache, "repository-audit"), { recursive: true });
 await mkdir(resolve(cache, "outbox"), { recursive: true });
 
@@ -23,12 +24,12 @@ for (const queued of jobs) {
   const job = (await api(`${base}/api/ingest/v1/jobs/${encodeURIComponent(queued.id)}/claim`, { method: "POST", headers, body: "{}" })).data;
   if (job.provider !== "local") continue;
   try {
-    await exec(process.execPath, [`${root}/scripts/scan-local-projects.mjs`, process.env.LOCAL_SCAN_ROOT || "/Users/af/cpro01"], { timeout: 45 * 60_000, maxBuffer: 2_000_000, env: { ...process.env, LOCAL_SCAN_OUTPUT: inventory } });
+    await exec(process.execPath, [`${root}/scripts/scan-local-projects.mjs`, ...scanRoots], { timeout: 45 * 60_000, maxBuffer: 2_000_000, env: { ...process.env, LOCAL_SCAN_OUTPUT: inventory } });
     const fingerprint = await localFingerprint();
     const previous = await readFile(resolve(cache, "last-fingerprint"), "utf8").catch(() => "");
     if (previous.trim() === fingerprint && queued.mode !== "full") await completeCacheHit(queued.id, fingerprint);
     else {
-      await exec(process.execPath, [`${root}/scripts/repository-audit.mjs`], { cwd: root, timeout: 45 * 60_000, maxBuffer: 20_000_000, env: { ...process.env, REPOSITORY_SCAN_ROOT: process.env.LOCAL_SCAN_ROOT || "/Users/af/cpro01", REPOSITORY_AUDIT_CACHE: resolve(cache, "repository-audit") } });
+      await exec(process.execPath, [`${root}/scripts/repository-audit.mjs`], { cwd: root, timeout: 45 * 60_000, maxBuffer: 20_000_000, env: { ...process.env, REPOSITORY_SCAN_ROOTS: scanRoots.join(";"), REPOSITORY_AUDIT_CACHE: resolve(cache, "repository-audit") } });
       const discovery = await exec(process.execPath, [`${root}/scripts/discover-assets.mjs`, "--upload"], { cwd: root, timeout: 45 * 60_000, maxBuffer: 20_000_000, env: { ...process.env, WORKER_URL: base, SCANNER_KEY: key, SCAN_JOB_ID: queued.id, SCANNER_CONNECTOR_PROVIDER: "local", ASSET_DISCOVERY_PROVIDERS: "local", LOCAL_INVENTORY_PATH: inventory, REPOSITORY_AUDIT_PATH: audit, ASSET_DISCOVERY_OUTPUT: output } });
       const summary = [...String(discovery.stdout || "").trim().split("\n")].reverse().map((line) => { try { return JSON.parse(line); } catch { return null; } }).find(Boolean);
       if (summary?.uploadStatus === "partial") await writeFile(resolve(cache, "last-partial"), `${new Date().toISOString()}\n`, { mode: 0o600 });
