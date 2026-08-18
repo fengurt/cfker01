@@ -986,7 +986,7 @@ async function readVersionSnapshot(env: Env, row: Row): Promise<unknown> {
     chunks.some((chunk, index) => Number(chunk.chunk_index) !== index)
   )
     throw new Error("asset_map_version_incomplete");
-  const content = chunks.map((chunk) => text(chunk.content)).join("");
+  const content = chunks.map((chunk) => String(chunk.content ?? "")).join("");
   if (content.length !== Number(stored.contentLength))
     throw new Error("asset_map_version_incomplete");
   const snapshot = parseJson(content, null);
