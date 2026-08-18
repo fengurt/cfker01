@@ -3,6 +3,7 @@ import { logEvent } from "./lib/logger";
 import { syncAll } from "./lib/sync";
 import { runResourceOperations } from "./lib/resource-operations";
 import { ensurePeriodicResourceSnapshot } from "./lib/resource-snapshot";
+import { ensurePeriodicAssetMapVersion } from "./lib/asset-map";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -23,6 +24,7 @@ export default {
     ctx.waitUntil(runSyncSweep(env));
     ctx.waitUntil(runResourceOperations(env));
     ctx.waitUntil(ensurePeriodicResourceSnapshot(env));
+    ctx.waitUntil(ensurePeriodicAssetMapVersion(env));
   },
 };
 

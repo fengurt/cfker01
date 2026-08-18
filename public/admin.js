@@ -22,6 +22,7 @@ const translations = {
     cloudInventoryHelp:
       "统一筛选腾讯云、Cloudflare、GoDaddy 与链上域名资源。",
     repositories: "仓库",
+    assetMap: "资产地图",
     region: "地域",
     onlineServers: "在线",
     activeDeployments: "部署项目",
@@ -129,6 +130,7 @@ const translations = {
     cloudInventoryHelp:
       "Filter Tencent Cloud, Cloudflare, GoDaddy, and on-chain domain assets in one place.",
     repositories: "Repositories",
+    assetMap: "Asset map",
     region: "Region",
     onlineServers: "Online",
     activeDeployments: "Deployments",
@@ -871,7 +873,7 @@ document.querySelectorAll("#resource-view-tabs [data-resource-view]").forEach((b
 }));
 function switchWorkspace(view) {
   const normalizedView = view === "cloud" ? "servers" : view;
-  for (const name of ["tasks", "projects", "servers", "repositories"]) {
+  for (const name of ["tasks", "projects", "servers", "repositories", "map"]) {
     $("#" + name + "-view").hidden = name !== normalizedView;
     document
       .querySelector(`[data-view="${name}"]`)
@@ -888,6 +890,7 @@ function switchWorkspace(view) {
     Promise.all([loadAssetSummary(), loadRepositoryAssets()]).catch((error) =>
       setNotice(error.message, true),
     );
+  if (normalizedView === "map") window.loadAssetMap?.();
 }
 $("#manage-tasks").addEventListener("click", () => switchWorkspace("tasks"));
 $("#manage-projects").addEventListener("click", () =>
@@ -899,6 +902,7 @@ $("#manage-servers").addEventListener("click", () =>
 $("#manage-repositories").addEventListener("click", () =>
   switchWorkspace("repositories"),
 );
+$("#manage-map").addEventListener("click", () => switchWorkspace("map"));
 $("#manage-reviews").addEventListener("click", async () => {
   await loadReviewSummary();
   $("#reviews-dialog").showModal();

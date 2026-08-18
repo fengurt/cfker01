@@ -26,6 +26,7 @@ Dual-cloud setup: [docs/dual-cloud.md](./docs/dual-cloud.md). Before Tencent com
 |------|---------|
 | `wrangler.jsonc` | Worker config, D1/KV bindings, cron, envs |
 | `src/index.ts` | Fetch + scheduled handlers |
+| `src/lib/asset-map.ts` | Versioned local-to-cloud asset graph |
 | `src/routes/admin.ts` | Audit + heartbeat management |
 | `migrations/` | D1 schema |
 | `scripts/dev-up.sh` | Local dev entrypoint |
@@ -47,5 +48,6 @@ wrangler tail --env production
 
 ## Docs
 
+- [Live Asset Map Agent guide](./docs/asset-map-agent-guide.md)
 - https://developers.cloudflare.com/workers/
 - MCP: https://docs.mcp.cloudflare.com/mcp

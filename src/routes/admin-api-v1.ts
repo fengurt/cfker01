@@ -7,6 +7,7 @@ import { getIncident, listIncidents, openIncident, updateIncident } from "../lib
 import type { IncidentSeverity } from "../lib/incidents";
 import { rankPlacement } from "../lib/placement";
 import { getApiProvider, getApiProviderHistory, listApiProviders, queueApiProviderProbe } from "../lib/api-provider-monitor";
+import { createAssetMapVersion, deleteAssetMapEdge, getAssetMap, getAssetMapVersion, listAssetMapVersions, restoreAssetMapVersion, upsertAssetMapAnnotation, upsertAssetMapEdge, type AssetMapActor } from "../lib/asset-map";
 
 const SECRET_FIELD = /(secret|token|password|credential|private.?key|api.?key)/i;
 
@@ -27,6 +28,7 @@ export async function handleAdminApiV1(request: Request, env: Env, ctx: Executio
   }
   try {
     if (resource === "openapi.json" && request.method === "GET") return openApi(request);
+    if (resource === "asset-map") return assetMapApi(request, env, parts, url);
     if (resource === "overview" && request.method === "GET") return overview(request, env);
     if (resource === "api-providers") {
       if (!id && request.method === "GET") return apiProviders(request, env);
@@ -91,6 +93,10 @@ export async function handleAdminApiV1(request: Request, env: Env, ctx: Executio
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "unknown_error";
     if (message === "connector_not_found_or_disabled") return v1Error(request, message, "Connector not found or disabled.", 404);
+    if (["entity_id_required", "invalid_asset_map_edge"].includes(message)) return v1Error(request, message, "The asset-map mutation is invalid.", 400);
+    if (message === "asset_map_node_not_found") return v1Error(request, message, "One or more asset-map nodes do not exist.", 404);
+    if (message === "incompatible_asset_map_version") return v1Error(request, message, "The selected asset-map version uses an incompatible schema.", 409);
+    if (message === "asset_map_restore_too_large") return v1Error(request, message, "The selected manual layer is too large for an atomic restore.", 413);
     console.error(JSON.stringify({ event: "admin_api.error", requestId: requestId(request), path: url.pathname, error: message }));
     return v1Error(request, "internal_error", "The request could not be completed.", 500);
   }
@@ -114,6 +120,53 @@ async function overview(request: Request, env: Env): Promise<Response> {
     env.MGMT_DB.prepare(`SELECT id,connector_id,status,error_code,error_message,updated_at FROM scan_jobs WHERE error_code IS NOT NULL ORDER BY updated_at DESC LIMIT 10`).all(),
   ]);
   return v1Data(request, { connectors: connectors.results ?? [], assets: assets.results ?? [], jobs: jobs.results ?? [], recentErrors: errors.results ?? [] }, { generatedAt: new Date().toISOString() });
+}
+
+async function assetMapApi(request: Request, env: Env, parts: string[], url: URL): Promise<Response> {
+  const [, section, value, operation] = parts;
+  if (!section && request.method === "GET") {
+    const map = await getAssetMap(env);
+    const kind = cleanText(url.searchParams.get("kind"), 40);
+    const status = cleanText(url.searchParams.get("status"), 80);
+    const q = cleanText(url.searchParams.get("q"), 200)?.toLocaleLowerCase();
+    const nodes = map.nodes.filter((node) => (!kind || node.kind === kind) && (!status || node.status === status) && (!q || `${node.label} ${JSON.stringify(node.metadata)} ${node.annotation?.notes ?? ""}`.toLocaleLowerCase().includes(q)));
+    const ids = new Set(nodes.map((node) => node.id));
+    return v1Data(request, { ...map, nodes, edges: map.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)) }, { totalNodes: map.nodes.length, filteredNodes: nodes.length, totalEdges: map.edges.length });
+  }
+  if (section === "versions" && !value && request.method === "GET") return v1Data(request, await listAssetMapVersions(env, Number(url.searchParams.get("limit") ?? 50)));
+  if (section === "versions" && !value && request.method === "POST") {
+    const body = await readObject(request) ?? {};
+    return v1Data(request, await createAssetMapVersion(env, await assetMapActor(request, env), "manual", cleanText(body.summary, 500), true), {}, 201);
+  }
+  if (section === "versions" && value && !operation && request.method === "GET") {
+    const version = await getAssetMapVersion(env, value);
+    if (!version) return v1Error(request, "not_found", "Asset-map version not found.", 404);
+    if (url.searchParams.get("download") === "1") return Response.json(version, { headers: { "Cache-Control": "no-store", "Content-Disposition": `attachment; filename=asset-map-${String(version.version)}.json` } });
+    return v1Data(request, version);
+  }
+  if (section === "versions" && value && operation === "restore" && request.method === "POST") {
+    const restored = await restoreAssetMapVersion(env, value, await assetMapActor(request, env));
+    return restored ? v1Data(request, restored, {}, 201) : v1Error(request, "not_found", "Asset-map version not found.", 404);
+  }
+  if (section === "annotations" && !value && request.method === "PUT") {
+    const body = await readObject(request);
+    if (!body) return v1Error(request, "invalid_json", "A JSON object is required.", 400);
+    return v1Data(request, await upsertAssetMapAnnotation(env, body, await assetMapActor(request, env)));
+  }
+  if (section === "edges" && !value && request.method === "PUT") {
+    const body = await readObject(request);
+    if (!body) return v1Error(request, "invalid_json", "A JSON object is required.", 400);
+    return v1Data(request, await upsertAssetMapEdge(env, body, await assetMapActor(request, env)));
+  }
+  if (section === "edges" && value && request.method === "DELETE") {
+    return await deleteAssetMapEdge(env, value, await assetMapActor(request, env)) ? new Response(null, { status: 204 }) : v1Error(request, "not_found", "Manual asset-map relation not found.", 404);
+  }
+  return v1Error(request, "not_found", "Asset-map API endpoint not found.", 404);
+}
+
+async function assetMapActor(request: Request, env: Env): Promise<AssetMapActor> {
+  const session = await readAdminSession(request, env);
+  return { type: "admin", id: session?.userId ?? "admin_token" };
 }
 
 async function apiProviders(request: Request, env: Env): Promise<Response> {
@@ -564,6 +617,7 @@ function openApi(request: Request): Response {
     "/export/assets.ndjson": ["get"], "/audit/export.ndjson": ["get"], "/repository-audit/runs": ["get"], "/repository-audit/repositories": ["get"], "/repository-audit/repositories/{id}": ["get"], "/deployment-evidence": ["get"], "/server-status": ["get"], "/scans": ["post"], "/scans/{id}": ["get"], "/scans/{id}/cancel": ["post"], "/scans/{id}/retry": ["post"],
     "/resource-links": ["get"], "/resource-links/{id}": ["patch"], "/incidents": ["get", "post"], "/incidents/{id}": ["get", "patch"], "/service-keys": ["get", "post"], "/service-keys/{id}": ["delete"], "/service-keys/{id}/rotate": ["post"],
     "/api-providers": ["get"], "/api-providers/{id}": ["get"], "/api-providers/{id}/history": ["get"], "/api-providers/{id}/probe": ["post"],
+    "/asset-map": ["get"], "/asset-map/versions": ["get", "post"], "/asset-map/versions/{id}": ["get"], "/asset-map/versions/{id}/restore": ["post"], "/asset-map/annotations": ["put"], "/asset-map/edges": ["put"], "/asset-map/edges/{id}": ["delete"],
     "/tasks": ["get", "post"], "/tasks/{id}": ["get", "patch"], "/tasks/{id}/transition": ["post"], "/tasks/{id}/comments": ["post"], "/tasks/{id}/dependencies": ["post"], "/tasks/gantt": ["get"],
     "/task-people": ["get", "post"], "/task-people/{id}": ["patch"], "/task-milestones": ["get", "post"], "/task-milestones/{id}": ["patch"], "/task-views": ["get", "post"], "/task-views/{id}": ["delete"],
   })) paths[path] = Object.fromEntries(methods.map((method) => [method, { responses: { "200": { description: "Success" } } }]));
