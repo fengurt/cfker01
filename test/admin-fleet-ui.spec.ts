@@ -22,7 +22,7 @@ describe("admin fleet UI release contract", () => {
 
   it("cache-busts every admin asset with one shell release key", () => {
     expect(workspace).toContain(
-      'const adminAssetVersion = "20260818-asset-map-topology-1"',
+      'const adminAssetVersion = "20260819-asset-map-snapshot-1"',
     );
     for (const asset of [
       "admin.css",
