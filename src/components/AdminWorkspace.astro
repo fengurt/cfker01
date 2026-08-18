@@ -1,6 +1,6 @@
 ---
 const pageTitle = "资源运营中心 | TableAI Catalog";
-const adminAssetVersion = "20260818-asset-map-navigation-1";
+const adminAssetVersion = "20260818-asset-map-topology-1";
 ---
 <!doctype html>
 <html lang="zh-CN" data-auth-state="pending">
@@ -137,13 +137,14 @@ const adminAssetVersion = "20260818-asset-map-navigation-1";
         </section>
         <section id="map-view" class="asset-map-workspace" hidden>
           <header class="asset-map-header">
-            <div><p class="kicker">LIVE MAP / 资产关系</p><h2>代码、云端与访问入口</h2><p>扫描事实与人工补充独立保存。选择节点可查看关系、证据和维护备注。</p></div>
+            <div><p class="kicker">LIVE MAP / 资产关系</p><h2>代码、云端与访问入口</h2><p>关系图连接本地目录、仓库、项目、部署、服务器、服务和访问入口。选择节点可收敛查看上下游。</p></div>
             <div class="asset-map-actions"><a href="/api/admin/v1/asset-map" target="_blank" rel="noopener noreferrer">API JSON</a><button id="asset-map-snapshot" type="button">保存版本</button><button id="asset-map-refresh" type="button">刷新地图</button></div>
           </header>
           <form id="asset-map-filters" class="asset-map-filters">
             <label><span>搜索</span><input name="q" type="search" placeholder="本地路径、owner/repo、服务器或域名" /></label>
             <label><span>类型</span><select name="kind"><option value="">全部类型</option><option value="local_path">本地路径</option><option value="repository">GitHub 仓库</option><option value="project">项目</option><option value="deployment">部署</option><option value="server">服务器</option><option value="service">运行服务</option><option value="endpoint">DNS / URL</option><option value="cloud_asset">云资产</option></select></label>
             <label><span>关系状态</span><select name="edgeStatus"><option value="">全部关系</option><option value="confirmed">已确认</option><option value="candidate">待确认</option></select></label>
+            <fieldset class="asset-map-mode" aria-label="地图显示方式"><legend>显示</legend><button type="button" data-map-mode="topology" aria-pressed="true">关系图</button><button type="button" data-map-mode="list" aria-pressed="false">清单</button></fieldset>
             <output id="asset-map-filter-result" aria-live="polite">等待读取</output>
           </form>
           <div id="asset-map-summary" class="asset-map-summary" aria-label="地图摘要"></div>

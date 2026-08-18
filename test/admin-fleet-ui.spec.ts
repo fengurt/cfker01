@@ -14,13 +14,15 @@ describe("admin fleet UI release contract", () => {
     expect(adminScript).toContain('setAuthState("pending")');
     expect(adminScript).toContain('setAuthState("authenticated")');
     expect(adminScript).toContain('setAuthState("anonymous")');
-    expect(adminScript).toContain('if (error.status === 401) return showLogin()');
+    expect(adminScript).toContain(
+      "if (error.status === 401) return showLogin()",
+    );
     expect(adminScript).toContain('error.code === "reauthentication_required"');
   });
 
   it("cache-busts every admin asset with one shell release key", () => {
     expect(workspace).toContain(
-      'const adminAssetVersion = "20260818-asset-map-navigation-1"',
+      'const adminAssetVersion = "20260818-asset-map-topology-1"',
     );
     for (const asset of [
       "admin.css",
@@ -37,9 +39,7 @@ describe("admin fleet UI release contract", () => {
       "admin-interactions.js",
       "admin-map.js",
     ])
-      expect(workspace).toContain(
-        `${asset}?v=\${adminAssetVersion}`,
-      );
+      expect(workspace).toContain(`${asset}?v=\${adminAssetVersion}`);
   });
 
   it("uses one integrated server board without the duplicate cost grid", () => {
@@ -50,7 +50,9 @@ describe("admin fleet UI release contract", () => {
   });
 
   it("labels retained runtime values as stale instead of calling them insufficient", () => {
-    expect(adminScript).toContain('const stalePrefix = locale === "zh-CN" ? "旧数据："');
+    expect(adminScript).toContain(
+      'const stalePrefix = locale === "zh-CN" ? "旧数据："',
+    );
     expect(adminScript).not.toContain('label: locale === "zh-CN" ? "数据不足"');
   });
 
@@ -64,12 +66,12 @@ describe("admin fleet UI release contract", () => {
   });
 
   it("renders official subscription and documentation links for every API connector", () => {
-    expect(adminScript).toContain('provider.officialLinks?.subscriptionUrl');
-    expect(adminScript).toContain('provider.officialLinks?.documentationUrl');
+    expect(adminScript).toContain("provider.officialLinks?.subscriptionUrl");
+    expect(adminScript).toContain("provider.officialLinks?.documentationUrl");
     expect(adminScript).toContain('t("subscribeOfficial")');
     expect(adminScript).toContain('t("officialDocs")');
-    expect(adminScript).toContain('provider.modelCatalog || []');
-    expect(adminScript).toContain('provider.validity?.credential?.expiresAt');
+    expect(adminScript).toContain("provider.modelCatalog || []");
+    expect(adminScript).toContain("provider.validity?.credential?.expiresAt");
   });
 
   it("renders one project-attribution row with measured resource semantics", () => {
@@ -96,7 +98,9 @@ describe("admin fleet UI release contract", () => {
     expect(adminScript).toContain('"disk-free-desc"');
     expect(adminScript).toContain("filteredFleetServers");
     expect(adminServersRoute).toContain('["cvm","lighthouse"].includes');
-    expect(adminServersRoute).toContain("region:server.region??cloudAsset?.region??null");
+    expect(adminServersRoute).toContain(
+      "region:server.region??cloudAsset?.region??null",
+    );
   });
 
   it("ships a lazy, editable asset map with version history", () => {
@@ -104,9 +108,22 @@ describe("admin fleet UI release contract", () => {
     expect(workspace).toContain('id="asset-map-canvas"');
     expect(workspace).toContain('id="asset-map-inspector"');
     expect(workspace).toContain('id="asset-map-history"');
-    expect(adminMapScript).toContain('window.loadAssetMap = loadAssetMap');
-    expect(adminMapScript).toContain('/api/admin/v1/asset-map/annotations');
-    expect(adminMapScript).toContain('/api/admin/v1/asset-map/edges');
-    expect(adminMapScript).toContain('/api/admin/v1/asset-map/versions');
+    expect(adminMapScript).toContain("window.loadAssetMap = loadAssetMap");
+    expect(adminMapScript).toContain("/api/admin/v1/asset-map/annotations");
+    expect(adminMapScript).toContain("/api/admin/v1/asset-map/edges");
+    expect(adminMapScript).toContain("/api/admin/v1/asset-map/versions");
+  });
+
+  it("renders real asset relationships as a bounded interactive topology", () => {
+    expect(workspace).toContain('data-map-mode="topology"');
+    expect(workspace).toContain('data-map-mode="list"');
+    expect(adminMapScript).toContain("function renderTopology");
+    expect(adminMapScript).toContain("function drawTopologyEdges");
+    expect(adminMapScript).toMatch(
+      /createElementNS\(\s*"http:\/\/www\.w3\.org\/2000\/svg",\s*"path"/,
+    );
+    expect(adminMapScript).toContain("topologyNeighborhood");
+    expect(adminMapScript).toContain("TOPOLOGY_NODE_LIMIT");
+    expect(adminMapScript).toContain("data-topology-node-id");
   });
 });
