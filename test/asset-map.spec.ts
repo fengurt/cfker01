@@ -6,6 +6,7 @@ import {
 } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker from "../src/index";
+import { ensurePeriodicAssetMapVersion } from "../src/lib/asset-map";
 
 const adminHeaders = {
   Authorization: `Bearer ${env.ADMIN_TOKEN}`,
@@ -76,7 +77,13 @@ describe("versioned live asset map", () => {
     const body = (await response.json()) as {
       data: {
         nodes: Array<{ id: string; kind: string; label: string }>;
-        edges: Array<{ source: string; target: string; relationship: string }>;
+        edges: Array<{
+          source: string;
+          target: string;
+          relationship: string;
+          status: string;
+          evidence: string[];
+        }>;
       };
     };
     const local = body.data.nodes.find(
@@ -95,6 +102,8 @@ describe("versioned live asset map", () => {
           source: local!.id,
           target: repository!.id,
           relationship: "syncs_to",
+          status: "confirmed",
+          evidence: expect.arrayContaining(["sync_status:synced"]),
         }),
         expect.objectContaining({
           source: repository!.id,
@@ -147,6 +156,11 @@ describe("versioned live asset map", () => {
     );
     expect(relation.status).toBe(200);
     const relationBody = (await relation.json()) as { data: { id: string } };
+    const originalEdge = await env.MGMT_DB.prepare(
+      `SELECT created_at FROM asset_map_manual_edges WHERE id=?1`,
+    )
+      .bind(relationBody.data.id)
+      .first<{ created_at: string }>();
 
     const version = await call(
       "/api/admin/v1/asset-map/versions",
@@ -185,12 +199,23 @@ describe("versioned live asset map", () => {
     expect(restored.status).toBe(201);
     expect(
       await env.MGMT_DB.prepare(
-        `SELECT COUNT(*) count FROM asset_map_manual_edges WHERE id=?1`,
+        `SELECT COUNT(*) count,MIN(created_at) created_at FROM asset_map_manual_edges WHERE id=?1`,
       )
         .bind(relationBody.data.id)
-        .first<{ count: number }>(),
-    ).toMatchObject({ count: 1 });
+        .first<{ count: number; created_at: string }>(),
+    ).toMatchObject({ count: 1, created_at: originalEdge?.created_at });
     await waitOnExecutionContext(ctx);
+  });
+
+  it("creates a daily scheduled snapshot even after a recent manual version", async () => {
+    const before = await env.MGMT_DB.prepare(
+      `SELECT COUNT(*) count FROM asset_map_versions WHERE reason='scheduled'`,
+    ).first<{ count: number }>();
+    await ensurePeriodicAssetMapVersion(env);
+    const after = await env.MGMT_DB.prepare(
+      `SELECT COUNT(*) count FROM asset_map_versions WHERE reason='scheduled'`,
+    ).first<{ count: number }>();
+    expect(after?.count).toBe(Number(before?.count ?? 0) + 1);
   });
 
   it("exposes scoped MCP read and write interfaces", async () => {

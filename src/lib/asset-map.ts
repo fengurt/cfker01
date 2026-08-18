@@ -33,6 +33,8 @@ export interface AssetMapEdge {
   sourceType: "derived" | "scanner" | "manual";
   evidence: unknown[];
   notes?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface AssetMapAnnotation {
@@ -247,10 +249,13 @@ export async function getAssetMap(env: Env): Promise<AssetMapSnapshot> {
         source: localId,
         target: repoId,
         relationship: "syncs_to",
-        status: text(row.sync_status) || "unverified",
+        status: "confirmed",
         confidence: 1,
         sourceType: "derived",
-        evidence: ["repository_snapshots.local_paths"],
+        evidence: [
+          "repository_snapshots.local_paths",
+          `sync_status:${text(row.sync_status) || "unverified"}`,
+        ],
       });
     }
     if (row.project_id)
@@ -483,14 +488,20 @@ export async function createAssetMapVersion(
 
 export async function ensurePeriodicAssetMapVersion(env: Env): Promise<void> {
   const latest = await env.MGMT_DB.prepare(
-    `SELECT created_at FROM asset_map_versions ORDER BY created_at DESC LIMIT 1`,
+    `SELECT created_at FROM asset_map_versions WHERE reason='scheduled' ORDER BY created_at DESC LIMIT 1`,
   ).first<{ created_at: string }>();
   if (
     latest &&
     Date.now() - Date.parse(latest.created_at) < PERIODIC_INTERVAL_MS
   )
     return;
-  await createAssetMapVersion(env, { type: "system", id: "cron" }, "scheduled");
+  await createAssetMapVersion(
+    env,
+    { type: "system", id: "cron" },
+    "scheduled",
+    null,
+    true,
+  );
   await env.MGMT_DB.prepare(
     `DELETE FROM asset_map_versions WHERE reason='scheduled' AND created_at<?1`,
   )
@@ -726,7 +737,7 @@ export async function restoreAssetMapVersion(
   for (const item of snapshot.manualEdges)
     statements.push(
       env.MGMT_DB.prepare(
-        `INSERT INTO asset_map_manual_edges(id,source_id,target_id,relationship,status,confidence,evidence,notes,actor_type,actor_id,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1,?11,?11)`,
+        `INSERT INTO asset_map_manual_edges(id,source_id,target_id,relationship,status,confidence,evidence,notes,actor_type,actor_id,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1,?11,?12)`,
       ).bind(
         item.id,
         item.source,
@@ -738,6 +749,7 @@ export async function restoreAssetMapVersion(
         item.notes ?? null,
         actor.type,
         clean(actor.id, 200),
+        item.createdAt || new Date().toISOString(),
         new Date().toISOString(),
       ),
     );
@@ -777,6 +789,8 @@ function serializeManualEdge(row: Row): AssetMapEdge {
     sourceType: "manual",
     evidence: jsonArray(row.evidence),
     notes: nullableText(row.notes),
+    createdAt: nullableText(row.created_at),
+    updatedAt: nullableText(row.updated_at),
   };
 }
 function repositoryLabel(row: Row): string {
