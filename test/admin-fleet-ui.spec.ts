@@ -112,6 +112,8 @@ describe("admin fleet UI release contract", () => {
     expect(adminMapScript).toContain("/api/admin/v1/asset-map/annotations");
     expect(adminMapScript).toContain("/api/admin/v1/asset-map/edges");
     expect(adminMapScript).toContain("/api/admin/v1/asset-map/versions");
+    expect(adminMapScript).toContain("const button = event.currentTarget");
+    expect(adminMapScript).not.toContain("event.currentTarget.disabled = false");
   });
 
   it("renders real asset relationships as a bounded interactive topology", () => {

@@ -687,7 +687,8 @@
   });
   $("#asset-map-refresh")?.addEventListener("click", () => loadAssetMap(true));
   $("#asset-map-snapshot")?.addEventListener("click", async (event) => {
-    event.currentTarget.disabled = true;
+    const button = event.currentTarget;
+    button.disabled = true;
     try {
       await api("/api/admin/v1/asset-map/versions", {
         method: "POST",
@@ -697,7 +698,7 @@
     } catch (error) {
       alert(error.message);
     } finally {
-      event.currentTarget.disabled = false;
+      button.disabled = false;
     }
   });
   $("#asset-map-history")?.addEventListener("toggle", (event) => {
