@@ -20,6 +20,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
     <link rel="stylesheet" href="/admin-scanner.css?v=20260715-1" />
     <link rel="stylesheet" href="/admin-tasks.css?v=20260803-2" />
     <link rel="stylesheet" href="/admin-interactions.css?v=20260802-5" />
+    <link rel="stylesheet" href="/admin-map.css?v=20260818-1" />
   </head>
   <body>
     <a class="skip" href="#admin-main" data-i18n="skip">跳到管理区</a>
@@ -40,7 +41,7 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
       </section>
       <section id="dashboard" hidden>
         <div class="admin-intro"><div><p class="kicker">RESOURCE OPS / 资源运营</p><h1 data-i18n="inventory">项目资源库</h1><p data-i18n="inventoryHelp">统一管理本机扫描、技能、Agent、仓库、部署与基准证据。</p></div><div class="intro-actions"><button id="manage-reviews" type="button">仓库审查</button><button class="primary" id="import-local" type="button" data-i18n="import">导入本机扫描</button></div></div>
-        <nav class="workspace-tabs" aria-label="资源视图"><button id="manage-tasks" type="button" data-view="tasks" data-i18n="tasks">任务</button><button id="manage-projects" type="button" data-view="projects" data-i18n="projects">项目</button><button id="manage-servers" class="active" type="button" data-view="servers" data-i18n="resourceMonitoring">资源监控</button><button id="manage-repositories" type="button" data-view="repositories" data-i18n="repositories">仓库</button></nav>
+        <nav class="workspace-tabs" aria-label="资源视图"><button id="manage-tasks" type="button" data-view="tasks" data-i18n="tasks">任务</button><button id="manage-projects" type="button" data-view="projects" data-i18n="projects">项目</button><button id="manage-servers" class="active" type="button" data-view="servers" data-i18n="resourceMonitoring">资源监控</button><button id="manage-repositories" type="button" data-view="repositories" data-i18n="repositories">仓库</button><button id="manage-map" type="button" data-view="map" data-i18n="assetMap">资产地图</button></nav>
         <section id="tasks-view" hidden>
           <div class="task-command-bar"><div class="task-metrics"><div><strong id="task-metric-open">0</strong><span data-i18n="openTasks">进行中</span></div><div><strong id="task-metric-due-soon">0</strong><span data-i18n="dueSoonTasks">7 天内到期</span></div><div><strong id="task-metric-unassigned">0</strong><span data-i18n="unassignedTasks">未分派</span></div><div><strong id="task-metric-value">¥0</strong><span data-i18n="expectedValue">预期收益</span></div></div><span id="task-realtime-status" class="task-realtime-status" data-state="offline" role="status">离线</span><button id="quick-task-open" class="primary" type="button" aria-keyshortcuts="Control+K Meta+K"><span data-i18n="newTask">新建任务</span><kbd>⌘ K</kbd></button></div>
           <div class="task-view-bar"><div class="task-view-switch" role="group" aria-label="任务视图"><button class="active" type="button" data-task-view="list" data-i18n="taskList">列表</button><button type="button" data-task-view="board" data-i18n="taskBoard">看板</button><button type="button" data-task-view="gantt" data-i18n="taskGantt">甘特图</button></div><div class="task-saved-views"><select id="task-saved-view" aria-label="保存的视图"><option value="" data-i18n="savedViews">保存的视图</option></select><input id="task-view-name" data-i18n-placeholder="viewName" placeholder="视图名称" /><button id="save-task-view" type="button" data-i18n="saveView">保存视图</button></div></div>
@@ -133,6 +134,33 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
           <form class="asset-filters" id="repository-filters"><label><span data-i18n="search">搜索</span><input name="q" type="search" placeholder="owner/repository 或本机路径" /></label><label><span data-i18n="provider">来源</span><select name="provider"><option value="">全部</option><option value="github">GitHub</option><option value="local">Local</option></select></label><label><span>Owner</span><input name="account" /></label><label><span data-i18n="status">状态</span><select name="status"><option value="">全部</option><option value="active">active</option><option value="available">available</option><option value="archived">archived</option><option value="stale">stale</option></select></label><button type="submit" data-i18n="apply">筛选</button></form>
           <div class="asset-table repository-table"><div class="asset-head"><span>仓库</span><span>来源</span><span>同步状态</span><span>分支 / SHA</span><span>最近更新</span></div><div id="repository-assets"></div></div><div class="pagination"><button id="repository-previous" type="button">上一页</button><span id="repository-page-label">1 / 1</span><button id="repository-next" type="button">下一页</button></div>
         </section>
+        <section id="map-view" class="asset-map-workspace" hidden>
+          <header class="asset-map-header">
+            <div><p class="kicker">LIVE MAP / 资产关系</p><h2>代码、云端与访问入口</h2><p>扫描事实与人工补充独立保存。选择节点可查看关系、证据和维护备注。</p></div>
+            <div class="asset-map-actions"><a href="/api/admin/v1/asset-map" target="_blank" rel="noopener noreferrer">API JSON</a><button id="asset-map-snapshot" type="button">保存版本</button><button id="asset-map-refresh" type="button">刷新地图</button></div>
+          </header>
+          <form id="asset-map-filters" class="asset-map-filters">
+            <label><span>搜索</span><input name="q" type="search" placeholder="本地路径、owner/repo、服务器或域名" /></label>
+            <label><span>类型</span><select name="kind"><option value="">全部类型</option><option value="local_path">本地路径</option><option value="repository">GitHub 仓库</option><option value="project">项目</option><option value="deployment">部署</option><option value="server">服务器</option><option value="service">运行服务</option><option value="endpoint">DNS / URL</option><option value="cloud_asset">云资产</option></select></label>
+            <label><span>关系状态</span><select name="edgeStatus"><option value="">全部关系</option><option value="confirmed">已确认</option><option value="candidate">待确认</option></select></label>
+            <output id="asset-map-filter-result" aria-live="polite">等待读取</output>
+          </form>
+          <div id="asset-map-summary" class="asset-map-summary" aria-label="地图摘要"></div>
+          <div class="asset-map-layout">
+            <div id="asset-map-canvas" class="asset-map-canvas" aria-label="资产关系地图" aria-live="polite"></div>
+            <aside id="asset-map-inspector" class="asset-map-inspector" aria-labelledby="asset-map-inspector-title">
+              <div class="asset-map-empty"><h3 id="asset-map-inspector-title">选择一个节点</h3><p>查看上下游关系并补充名称、标签和维护备注。</p></div>
+            </aside>
+          </div>
+          <details id="asset-map-relation-editor" class="asset-map-editor">
+            <summary>Agent / 人工补充关系</summary>
+            <form id="asset-map-edge-form"><label><span>起点</span><select name="source" required></select></label><label><span>关系</span><input name="relationship" required placeholder="backs_up / routes_to / managed_by" /></label><label><span>终点</span><select name="target" required></select></label><label><span>状态</span><select name="status"><option value="confirmed">已确认</option><option value="candidate">待确认</option></select></label><label class="asset-map-edge-notes"><span>证据或说明</span><input name="notes" maxlength="5000" /></label><button type="submit">保存关系</button></form>
+          </details>
+          <details id="asset-map-history" class="asset-map-history">
+            <summary><span>版本历史与备份</span><small>自动每日快照，定时版本保留 90 天</small></summary>
+            <div id="asset-map-version-list" class="asset-map-version-list"></div>
+          </details>
+        </section>
       </section>
     </main>
     <dialog id="editor"><form method="dialog" id="editor-form"><div class="dialog-head"><div><p class="kicker">RESOURCE / 资源</p><h2 id="editor-title">Resource</h2><p id="editor-source"></p></div><button value="cancel" aria-label="Close">×</button></div><input type="hidden" id="editor-id" /><div class="tab-list" role="tablist"><button type="button" data-tab="overview" class="active" data-i18n="overview">概览</button><button type="button" data-tab="review">仓库审查</button><button type="button" data-tab="deployment" data-i18n="deployment">部署</button><button type="button" data-tab="backup" data-i18n="backup">备份</button><button type="button" data-tab="codebase" data-i18n="codebase">代码地图</button><button type="button" data-tab="notes" data-i18n="notes">加密笔记</button><button type="button" data-tab="benchmarks" data-i18n="benchmarks">基准发现</button></div>
@@ -166,5 +194,6 @@ const pageTitle = "资源运营中心 | TableAI Catalog";
     <script is:inline src="/admin-tasks.js?v=20260803-2"></script>
     <script is:inline src="/admin-infrastructure.js?v=20260723-2"></script>
     <script is:inline src="/admin-interactions.js?v=20260803-monitoring-1"></script>
+    <script is:inline src="/admin-map.js?v=20260818-1"></script>
   </body>
 </html>

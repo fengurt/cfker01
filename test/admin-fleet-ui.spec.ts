@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import workspace from "../src/components/AdminWorkspace.astro?raw";
 import adminScript from "../public/admin.js?raw";
 import adminServersRoute from "../src/routes/admin-servers.ts?raw";
+import adminMapScript from "../public/admin-map.js?raw";
 
 describe("admin fleet UI release contract", () => {
   it("keeps authentication neutral until the session check completes", () => {
@@ -77,5 +78,17 @@ describe("admin fleet UI release contract", () => {
     expect(adminScript).toContain("filteredFleetServers");
     expect(adminServersRoute).toContain('["cvm","lighthouse"].includes');
     expect(adminServersRoute).toContain("region:server.region??cloudAsset?.region??null");
+  });
+
+  it("ships a lazy, editable asset map with version history", () => {
+    expect(workspace).toContain('data-view="map"');
+    expect(workspace).toContain('id="asset-map-canvas"');
+    expect(workspace).toContain('id="asset-map-inspector"');
+    expect(workspace).toContain('id="asset-map-history"');
+    expect(workspace).toContain('/admin-map.js?v=20260818-1');
+    expect(adminMapScript).toContain('window.loadAssetMap = loadAssetMap');
+    expect(adminMapScript).toContain('/api/admin/v1/asset-map/annotations');
+    expect(adminMapScript).toContain('/api/admin/v1/asset-map/edges');
+    expect(adminMapScript).toContain('/api/admin/v1/asset-map/versions');
   });
 });

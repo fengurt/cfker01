@@ -1,0 +1,21 @@
+---
+description: Maintain the versioned local-to-cloud asset map without overwriting scanner facts
+globs:
+  - "src/lib/asset-map.ts"
+  - "src/routes/admin-api-v1.ts"
+  - "src/routes/mcp.ts"
+  - "public/admin-map.*"
+  - "docs/asset-map-agent-guide.md"
+alwaysApply: false
+---
+
+# Asset map changes
+
+Read `docs/asset-map-agent-guide.md` before changing or supplementing asset relationships.
+
+- Scanner-derived facts and manual annotations are separate ownership layers.
+- Use stable node IDs returned by the current map. Do not guess identifiers.
+- Uncertain relations remain `candidate` until deterministic evidence or an administrator confirms them.
+- Never store API keys, passwords, tokens, cookies, private keys, or 1Password references in the map.
+- Create a named version after a coherent Agent-authored change.
+- Restores affect only the manual layer. They must not modify cloud resources or scanner source tables.

@@ -10,7 +10,16 @@ import {
   type TaskActor,
   type TaskInput,
 } from "../lib/tasks";
-import { listApiProviders, queueApiProviderProbe } from "../lib/api-provider-monitor";
+import {
+  listApiProviders,
+  queueApiProviderProbe,
+} from "../lib/api-provider-monitor";
+import {
+  createAssetMapVersion,
+  getAssetMap,
+  upsertAssetMapAnnotation,
+  upsertAssetMapEdge,
+} from "../lib/asset-map";
 
 const SERVER_INFO = {
   name: "cfker01",
@@ -25,7 +34,16 @@ const SERVER_CARD = {
   auth: {
     type: "apiKey",
     header: "X-Api-Key",
-    scopes: ["read", "skills:write", "tasks:read", "tasks:write", "api-probes:read", "api-probes:write"],
+    scopes: [
+      "read",
+      "skills:write",
+      "tasks:read",
+      "tasks:write",
+      "api-probes:read",
+      "api-probes:write",
+      "asset-map:read",
+      "asset-map:write",
+    ],
   },
   endpoints: { tools: "/mcp", resources: "/v1/status" },
 };
@@ -196,8 +214,69 @@ const TOOLS = [
   },
   {
     name: "api_providers.probe",
-    description: "Queue an explicit API provider health probe. Requires api-probes:write.",
-    inputSchema: { type: "object", required: ["connectorId"], properties: { connectorId: { type: "string" }, mode: { type: "string", enum: ["standard", "inference"], default: "standard" }, idempotencyKey: { type: "string" } } },
+    description:
+      "Queue an explicit API provider health probe. Requires api-probes:write.",
+    inputSchema: {
+      type: "object",
+      required: ["connectorId"],
+      properties: {
+        connectorId: { type: "string" },
+        mode: {
+          type: "string",
+          enum: ["standard", "inference"],
+          default: "standard",
+        },
+        idempotencyKey: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "asset_map.get",
+    description:
+      "Read the private live map that connects local Git paths, GitHub repositories, projects, deployments, servers, services, and endpoints. Requires asset-map:read.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "asset_map.annotate",
+    description:
+      "Add or update a manual label, tags, and notes on a verified asset-map node. Requires asset-map:write.",
+    inputSchema: {
+      type: "object",
+      required: ["entityId"],
+      properties: {
+        entityId: { type: "string" },
+        label: { type: "string" },
+        notes: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  {
+    name: "asset_map.link",
+    description:
+      "Add or update a manual relationship between two existing asset-map nodes. Requires asset-map:write.",
+    inputSchema: {
+      type: "object",
+      required: ["source", "target", "relationship"],
+      properties: {
+        source: { type: "string" },
+        target: { type: "string" },
+        relationship: { type: "string" },
+        status: { type: "string", enum: ["confirmed", "candidate"] },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
+        evidence: { type: "array", items: { type: "string" } },
+        notes: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "asset_map.snapshot",
+    description:
+      "Create a restorable version of the live asset map. Requires asset-map:write.",
+    inputSchema: {
+      type: "object",
+      properties: { summary: { type: "string" } },
+    },
   },
 ];
 const RESOURCES = [
@@ -216,6 +295,11 @@ const RESOURCES = [
     name: "Private API provider health snapshot",
     mimeType: "application/json",
   },
+  {
+    uri: "ops://asset-map/snapshot",
+    name: "Private live asset map snapshot",
+    mimeType: "application/json",
+  },
 ];
 const WRITE_TOOLS = new Set([
   "skills.stage",
@@ -229,6 +313,12 @@ const TASK_WRITE_TOOLS = new Set([
   "tasks.comment",
 ]);
 const API_PROBE_WRITE_TOOLS = new Set(["api_providers.probe"]);
+const ASSET_MAP_READ_TOOLS = new Set(["asset_map.get"]);
+const ASSET_MAP_WRITE_TOOLS = new Set([
+  "asset_map.annotate",
+  "asset_map.link",
+  "asset_map.snapshot",
+]);
 
 interface McpRequest {
   jsonrpc: "2.0";
@@ -396,10 +486,13 @@ export async function handleMcp(
   }
   const params = toolArgs(body),
     name = params.name ?? "";
-  const taskResource =
-    body.method === "resources/read" &&
-    body.params?.uri === "ops://tasks/snapshot";
-  const apiProviderResource = body.method === "resources/read" && body.params?.uri === "ops://api-providers/snapshot";
+  const resourceUri =
+    body.method === "resources/read" && typeof body.params?.uri === "string"
+      ? body.params.uri
+      : null;
+  const taskResource = resourceUri === "ops://tasks/snapshot";
+  const apiProviderResource = resourceUri === "ops://api-providers/snapshot";
+  const assetMapResource = resourceUri === "ops://asset-map/snapshot";
   const scope =
     (body.method === "tools/call" && TASK_READ_TOOLS.has(name)) || taskResource
       ? "tasks:read"
@@ -407,7 +500,15 @@ export async function handleMcp(
         ? "tasks:write"
         : body.method === "tools/call" && API_PROBE_WRITE_TOOLS.has(name)
           ? "api-probes:write"
-          : apiProviderResource ? "api-probes:read" : "read";
+          : apiProviderResource
+            ? "api-probes:read"
+            : (body.method === "tools/call" &&
+                  ASSET_MAP_READ_TOOLS.has(name)) ||
+                assetMapResource
+              ? "asset-map:read"
+              : body.method === "tools/call" && ASSET_MAP_WRITE_TOOLS.has(name)
+                ? "asset-map:write"
+                : "read";
   const auth = await requireApiKey(request, env, ctx, scope);
   if (auth) return auth;
   if (body.method === "tools/call" && WRITE_TOOLS.has(name)) {
@@ -448,7 +549,12 @@ async function handleResourceRead(
   body: McpRequest,
   env: Env,
 ): Promise<Response> {
-  const uri = String(body.params?.uri ?? "");
+  if (typeof body.params?.uri !== "string")
+    return jsonResponse(
+      makeError(body.id, -32602, "invalid_resource_uri"),
+      400,
+    );
+  const uri = body.params.uri;
   if (uri === "status://all") {
     const snapshot: Record<string, unknown> = {};
     for (const source of listSources()) {
@@ -500,7 +606,37 @@ async function handleResourceRead(
     );
   }
   if (uri === "ops://api-providers/snapshot") {
-    return jsonResponse(makeResult(body.id, { contents: [{ uri, mimeType: "application/json", text: JSON.stringify({ generatedAt: new Date().toISOString(), providers: await listApiProviders(env) }, null, 2) }] }));
+    return jsonResponse(
+      makeResult(body.id, {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(
+              {
+                generatedAt: new Date().toISOString(),
+                providers: await listApiProviders(env),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+    );
+  }
+  if (uri === "ops://asset-map/snapshot") {
+    return jsonResponse(
+      makeResult(body.id, {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(await getAssetMap(env), null, 2),
+          },
+        ],
+      }),
+    );
   }
   return jsonResponse(makeError(body.id, -32602, "resource_not_found"), 404);
 }
@@ -565,10 +701,57 @@ async function handleToolCall(
     return commentTaskTool(request, body.id, env, args);
   if (name === "tasks.plan") return planTasks(body.id, env, args);
   if (name === "api_providers.probe") {
-    const connectorId = String(args.connectorId ?? ""), mode = args.mode === "inference" ? "inference" : "standard";
+    const connectorId = String(args.connectorId ?? ""),
+      mode = args.mode === "inference" ? "inference" : "standard";
     const actor = await mcpActor(request, env);
-    const job = await queueApiProviderProbe(env, connectorId, mode, typeof args.idempotencyKey === "string" ? args.idempotencyKey : null, actor.id ?? "mcp");
-    return job ? jsonResponse(textResult(body.id, job)) : jsonResponse(makeError(body.id, -32602, "provider_not_found"), 404);
+    const job = await queueApiProviderProbe(
+      env,
+      connectorId,
+      mode,
+      typeof args.idempotencyKey === "string" ? args.idempotencyKey : null,
+      actor.id ?? "mcp",
+    );
+    return job
+      ? jsonResponse(textResult(body.id, job))
+      : jsonResponse(makeError(body.id, -32602, "provider_not_found"), 404);
+  }
+  if (name === "asset_map.get")
+    return jsonResponse(textResult(body.id, await getAssetMap(env)));
+  if (name === "asset_map.annotate") {
+    const actor = await mcpActor(request, env);
+    return jsonResponse(
+      textResult(
+        body.id,
+        await upsertAssetMapAnnotation(env, args, {
+          type: "agent",
+          id: actor.id,
+        }),
+      ),
+    );
+  }
+  if (name === "asset_map.link") {
+    const actor = await mcpActor(request, env);
+    return jsonResponse(
+      textResult(
+        body.id,
+        await upsertAssetMapEdge(env, args, { type: "agent", id: actor.id }),
+      ),
+    );
+  }
+  if (name === "asset_map.snapshot") {
+    const actor = await mcpActor(request, env);
+    return jsonResponse(
+      textResult(
+        body.id,
+        await createAssetMapVersion(
+          env,
+          { type: "agent", id: actor.id },
+          "agent",
+          typeof args.summary === "string" ? args.summary : null,
+          true,
+        ),
+      ),
+    );
   }
   return jsonResponse(makeError(body.id, -32601, `unknown_tool: ${name}`), 400);
 }

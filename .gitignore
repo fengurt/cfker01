@@ -10,7 +10,10 @@ node_modules/
 .env.api-monitor
 .env.tencent.local
 .cos.yaml
-.cursor/
+.cursor/*
+!.cursor/rules/
+.cursor/rules/*
+!.cursor/rules/asset-map.mdc
 dist/
 .astro/
 .cache/

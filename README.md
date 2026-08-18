@@ -81,6 +81,8 @@ The resource-operations product contract, glossary, decisions, and release accep
 
 ## Project inventory and admin GUI
 
+Agent/API/MCP integration for the versioned local-to-cloud relationship map is documented in [docs/asset-map-agent-guide.md](docs/asset-map-agent-guide.md).
+
 Scan local projects, repositories, skills, and agent resources:
 
 ```bash
