@@ -6,7 +6,10 @@ import {
 } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker from "../src/index";
-import { ensurePeriodicAssetMapVersion } from "../src/lib/asset-map";
+import {
+  createAssetMapVersion,
+  ensurePeriodicAssetMapVersion,
+} from "../src/lib/asset-map";
 
 const adminHeaders = {
   Authorization: `Bearer ${env.ADMIN_TOKEN}`,
@@ -207,15 +210,35 @@ describe("versioned live asset map", () => {
     await waitOnExecutionContext(ctx);
   });
 
-  it("creates a daily scheduled snapshot even after a recent manual version", async () => {
+  it("creates a scheduled snapshot only after scanner facts change", async () => {
+    await createAssetMapVersion(
+      env,
+      { type: "admin", id: "periodic-test" },
+      "manual",
+      "Periodic baseline",
+      true,
+    );
     const before = await env.MGMT_DB.prepare(
       `SELECT COUNT(*) count FROM asset_map_versions WHERE reason='scheduled'`,
     ).first<{ count: number }>();
     await ensurePeriodicAssetMapVersion(env);
-    const after = await env.MGMT_DB.prepare(
+    const unchanged = await env.MGMT_DB.prepare(
       `SELECT COUNT(*) count FROM asset_map_versions WHERE reason='scheduled'`,
     ).first<{ count: number }>();
-    expect(after?.count).toBe(Number(before?.count ?? 0) + 1);
+    expect(unchanged?.count).toBe(Number(before?.count ?? 0));
+
+    const suffix = crypto.randomUUID().slice(0, 8),
+      now = new Date().toISOString();
+    await env.MGMT_DB.prepare(
+      `INSERT INTO discovered_assets(id,provider,account_id,kind,external_id,name,status,metadata,first_seen_at,last_seen_at,created_at,updated_at) VALUES(?1,'test','default','worker',?1,?2,'active','{}',?3,?3,?3,?3)`,
+    )
+      .bind(`scheduled-change-${suffix}`, `Scheduled change ${suffix}`, now)
+      .run();
+    await ensurePeriodicAssetMapVersion(env);
+    const changed = await env.MGMT_DB.prepare(
+      `SELECT COUNT(*) count FROM asset_map_versions WHERE reason='scheduled'`,
+    ).first<{ count: number }>();
+    expect(changed?.count).toBe(Number(before?.count ?? 0) + 1);
   });
 
   it("exposes scoped MCP read and write interfaces", async () => {
@@ -259,6 +282,42 @@ describe("versioned live asset map", () => {
     );
     expect(read.status).toBe(200);
     expect(JSON.stringify(await read.json())).toContain("schemaVersion");
+
+    const genericKeyResponse = await call(
+      "/admin/keys",
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          name: "asset-map-generic-read-test",
+          scopes: ["read"],
+        }),
+      },
+      ctx,
+    );
+    const genericKey = ((await genericKeyResponse.json()) as { key: string })
+      .key;
+    const malformedRead = await call(
+      "/mcp",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Api-Key": genericKey,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3,
+          method: "resources/read",
+          params: { uri: ["ops://asset-map/snapshot"] },
+        }),
+      },
+      ctx,
+    );
+    expect(malformedRead.status).toBe(400);
+    expect(JSON.stringify(await malformedRead.json())).not.toContain(
+      "schemaVersion",
+    );
     await waitOnExecutionContext(ctx);
   });
 });

@@ -495,13 +495,7 @@ export async function ensurePeriodicAssetMapVersion(env: Env): Promise<void> {
     Date.now() - Date.parse(latest.created_at) < PERIODIC_INTERVAL_MS
   )
     return;
-  await createAssetMapVersion(
-    env,
-    { type: "system", id: "cron" },
-    "scheduled",
-    null,
-    true,
-  );
+  await createAssetMapVersion(env, { type: "system", id: "cron" }, "scheduled");
   await env.MGMT_DB.prepare(
     `DELETE FROM asset_map_versions WHERE reason='scheduled' AND created_at<?1`,
   )
