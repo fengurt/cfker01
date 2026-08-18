@@ -245,7 +245,7 @@ describe("versioned live asset map", () => {
   it("chunks and reconstructs large snapshots without losing Unicode data", async () => {
     const suffix = crypto.randomUUID().slice(0, 8),
       now = new Date().toISOString(),
-      longLabel = `大型资产-${suffix}-${"测".repeat(4_000)}`,
+      longLabel = `大型资产-${suffix}-${"测 ".repeat(2_000)}`,
       statements = Array.from({ length: 180 }, (_, index) =>
         env.MGMT_DB.prepare(
           `INSERT INTO discovered_assets(id,provider,account_id,kind,external_id,name,status,metadata,first_seen_at,last_seen_at,created_at,updated_at) VALUES(?1,'test','default','worker',?1,?2,'active','{}',?3,?3,?3,?3)`,
@@ -272,6 +272,25 @@ describe("versioned live asset map", () => {
       .first<{ count: number; max_length: number }>();
     expect(Number(chunks?.count)).toBeGreaterThan(1);
     expect(Number(chunks?.max_length)).toBeLessThanOrEqual(64 * 1024);
+
+    const firstChunks = await env.MGMT_DB.prepare(
+      `SELECT chunk_index,content FROM asset_map_version_chunks WHERE version_id=?1 ORDER BY chunk_index LIMIT 2`,
+    )
+      .bind(version.id)
+      .all<{ chunk_index: number; content: string }>();
+    const first = firstChunks.results[0]!,
+      second = firstChunks.results[1]!,
+      combined = first.content + second.content,
+      whitespaceBoundary = combined.lastIndexOf(" ", first.content.length);
+    expect(whitespaceBoundary).toBeGreaterThan(0);
+    await env.MGMT_DB.batch([
+      env.MGMT_DB.prepare(
+        `UPDATE asset_map_version_chunks SET content=?1 WHERE version_id=?2 AND chunk_index=0`,
+      ).bind(combined.slice(0, whitespaceBoundary + 1), version.id),
+      env.MGMT_DB.prepare(
+        `UPDATE asset_map_version_chunks SET content=?1 WHERE version_id=?2 AND chunk_index=1`,
+      ).bind(combined.slice(whitespaceBoundary + 1), version.id),
+    ]);
 
     const restored = await getAssetMapVersion(env, String(version.id));
     const snapshot = restored?.snapshot as {
