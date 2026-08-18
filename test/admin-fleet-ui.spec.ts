@@ -126,4 +126,18 @@ describe("admin fleet UI release contract", () => {
     expect(adminMapScript).toContain("TOPOLOGY_NODE_LIMIT");
     expect(adminMapScript).toContain("data-topology-node-id");
   });
+
+  it("keeps topology focus and inspector accessibility consistent with filters", () => {
+    expect(adminMapScript).toContain(
+      'state.mode === "list"',
+    );
+    expect(adminMapScript).toContain("!nodeIds.has(state.selected)");
+    expect(adminMapScript).toContain(
+      "if (selectedIds.has(edge.target) || add(edge.target))",
+    );
+    expect(adminMapScript).toContain(
+      "if (selectedIds.has(edge.source) || add(edge.source))",
+    );
+    expect(adminMapScript).toContain('id: "asset-map-inspector-title"');
+  });
 });

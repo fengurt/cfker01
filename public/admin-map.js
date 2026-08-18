@@ -73,6 +73,12 @@
         (!query || searchable(node).includes(query)),
     );
     const nodeIds = new Set(nodes.map((node) => node.id));
+    if (
+      state.mode === "list" &&
+      state.selected &&
+      !nodeIds.has(state.selected)
+    )
+      state.selected = null;
     const directEdgeCount = matchingEdges.filter(
       (edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target),
     ).length;
@@ -300,12 +306,12 @@
         const next = new Set();
         for (const edge of edges) {
           if (frontier.has(edge.source)) {
-            add(edge.target);
-            next.add(edge.target);
+            if (selectedIds.has(edge.target) || add(edge.target))
+              next.add(edge.target);
           }
           if (frontier.has(edge.target)) {
-            add(edge.source);
-            next.add(edge.source);
+            if (selectedIds.has(edge.source) || add(edge.source))
+              next.add(edge.source);
           }
         }
         frontier = next;
@@ -542,7 +548,9 @@
     const inspector = $("#asset-map-inspector");
     inspector.replaceChildren(
       element("div", "asset-map-empty", [
-        element("h3", "", "选择一个节点"),
+        Object.assign(element("h3", "", "选择一个节点"), {
+          id: "asset-map-inspector-title",
+        }),
         element("p", "", "查看上下游关系并补充名称、标签和维护备注。"),
       ]),
     );
