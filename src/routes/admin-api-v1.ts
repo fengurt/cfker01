@@ -96,6 +96,7 @@ export async function handleAdminApiV1(request: Request, env: Env, ctx: Executio
     if (["entity_id_required", "invalid_asset_map_edge"].includes(message)) return v1Error(request, message, "The asset-map mutation is invalid.", 400);
     if (message === "asset_map_node_not_found") return v1Error(request, message, "One or more asset-map nodes do not exist.", 404);
     if (message === "incompatible_asset_map_version") return v1Error(request, message, "The selected asset-map version uses an incompatible schema.", 409);
+    if (message === "asset_map_version_incomplete") return v1Error(request, message, "The selected asset-map version is incomplete.", 409);
     if (message === "asset_map_restore_too_large") return v1Error(request, message, "The selected manual layer is too large for an atomic restore.", 413);
     console.error(JSON.stringify({ event: "admin_api.error", requestId: requestId(request), path: url.pathname, error: message }));
     return v1Error(request, "internal_error", "The request could not be completed.", 500);
