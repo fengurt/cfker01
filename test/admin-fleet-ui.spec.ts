@@ -18,9 +18,28 @@ describe("admin fleet UI release contract", () => {
     expect(adminScript).toContain('error.code === "reauthentication_required"');
   });
 
-  it("cache-busts the fleet assets with the same release key", () => {
-    expect(workspace).toContain("/admin-ops-v2.css?v=20260814-fleet-filter-1");
-    expect(workspace).toContain("/admin.js?v=20260814-fleet-filter-1");
+  it("cache-busts every admin asset with one shell release key", () => {
+    expect(workspace).toContain(
+      'const adminAssetVersion = "20260818-asset-map-navigation-1"',
+    );
+    for (const asset of [
+      "admin.css",
+      "admin-visibility.css",
+      "admin-compact.css",
+      "admin-ops-v2.css",
+      "admin-scanner.css",
+      "admin-tasks.css",
+      "admin-interactions.css",
+      "admin-map.css",
+      "admin.js",
+      "admin-tasks.js",
+      "admin-infrastructure.js",
+      "admin-interactions.js",
+      "admin-map.js",
+    ])
+      expect(workspace).toContain(
+        `${asset}?v=\${adminAssetVersion}`,
+      );
   });
 
   it("uses one integrated server board without the duplicate cost grid", () => {
@@ -85,7 +104,6 @@ describe("admin fleet UI release contract", () => {
     expect(workspace).toContain('id="asset-map-canvas"');
     expect(workspace).toContain('id="asset-map-inspector"');
     expect(workspace).toContain('id="asset-map-history"');
-    expect(workspace).toContain('/admin-map.js?v=20260818-1');
     expect(adminMapScript).toContain('window.loadAssetMap = loadAssetMap');
     expect(adminMapScript).toContain('/api/admin/v1/asset-map/annotations');
     expect(adminMapScript).toContain('/api/admin/v1/asset-map/edges');
