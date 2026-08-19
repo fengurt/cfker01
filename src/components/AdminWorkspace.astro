@@ -1,6 +1,6 @@
 ---
 const pageTitle = "资源运营中心 | TableAI Catalog";
-const adminAssetVersion = "20260819-asset-map-snapshot-1";
+const adminAssetVersion = "20260819-asset-map-filters-1";
 ---
 <!doctype html>
 <html lang="zh-CN" data-auth-state="pending">
@@ -137,14 +137,21 @@ const adminAssetVersion = "20260819-asset-map-snapshot-1";
         </section>
         <section id="map-view" class="asset-map-workspace" hidden>
           <header class="asset-map-header">
-            <div><p class="kicker">LIVE MAP / 资产关系</p><h2>代码、云端与访问入口</h2><p>关系图连接本地目录、仓库、项目、部署、服务器、服务和访问入口。选择节点可收敛查看上下游。</p></div>
+            <div><p class="kicker">LIVE MAP / 资产关系</p><h2>代码、云端与访问入口</h2><p>先筛选和定位资产，再按需查看本地目录、仓库、项目、部署、服务器、服务与访问入口的上下游关系。</p></div>
             <div class="asset-map-actions"><a href="/api/admin/v1/asset-map" target="_blank" rel="noopener noreferrer">API JSON</a><button id="asset-map-snapshot" type="button">保存版本</button><button id="asset-map-refresh" type="button">刷新地图</button></div>
           </header>
           <form id="asset-map-filters" class="asset-map-filters">
-            <label><span>搜索</span><input name="q" type="search" placeholder="本地路径、owner/repo、服务器或域名" /></label>
+            <label class="asset-map-global-search"><span>全局搜索</span><input name="q" type="search" autocomplete="off" placeholder="本地路径、owner/repo、项目、服务器、服务或域名" /></label>
             <label><span>类型</span><select name="kind"><option value="">全部类型</option><option value="local_path">本地路径</option><option value="repository">GitHub 仓库</option><option value="project">项目</option><option value="deployment">部署</option><option value="server">服务器</option><option value="service">运行服务</option><option value="endpoint">DNS / URL</option><option value="cloud_asset">云资产</option></select></label>
+            <label><span>同步情况</span><select name="syncStatus"><option value="">全部同步状态</option><option value="synced">已同步</option><option value="dirty_uncommitted">有未提交改动</option><option value="local_ahead">本地领先</option><option value="github_ahead">GitHub 领先</option><option value="github_head_mismatch">HEAD 不一致</option><option value="diverged">已分叉</option><option value="no_remote">没有 Remote</option><option value="github_not_found_or_no_access">GitHub 不可访问</option><option value="remote_non_github">非 GitHub Remote</option><option value="unverified">未验证</option></select></label>
+            <label><span>本地最后更新</span><select name="updated"><option value="">全部时间</option><option value="24h">24 小时内</option><option value="7d">7 天内</option><option value="30d">30 天内</option><option value="90d">90 天内</option><option value="older">90 天前</option><option value="unknown">未采集时间</option></select></label>
+            <label><span>扫描目录</span><select name="root"><option value="">全部目录</option><option value="/Users/af/cpro01">/Users/af/cpro01</option><option value="/Users/af/Documents">/Users/af/Documents</option></select></label>
+            <label><span>部署证据</span><select name="deployed"><option value="">全部</option><option value="true">已关联部署</option><option value="false">未关联部署</option></select></label>
+            <label><span>Skill</span><select name="skills"><option value="">全部</option><option value="true">包含 Skill</option><option value="false">不包含 Skill</option></select></label>
             <label><span>关系状态</span><select name="edgeStatus"><option value="">全部关系</option><option value="confirmed">已确认</option><option value="candidate">待确认</option></select></label>
-            <fieldset class="asset-map-mode" aria-label="地图显示方式"><legend>显示</legend><button type="button" data-map-mode="topology" aria-pressed="true">关系图</button><button type="button" data-map-mode="list" aria-pressed="false">清单</button></fieldset>
+            <label><span>排序</span><select name="sort"><option value="updated_desc">最近更新</option><option value="sync_risk">同步风险</option><option value="relations">关系数量</option><option value="updated_asc">最早更新</option><option value="name">名称</option></select></label>
+            <fieldset class="asset-map-mode" aria-label="地图显示方式"><legend>显示</legend><button type="button" data-map-mode="list" aria-pressed="true">清单</button><button type="button" data-map-mode="topology" aria-pressed="false">关系图</button></fieldset>
+            <button id="asset-map-reset" class="asset-map-reset" type="reset">重置</button>
             <output id="asset-map-filter-result" aria-live="polite">等待读取</output>
           </form>
           <div id="asset-map-summary" class="asset-map-summary" aria-label="地图摘要"></div>
