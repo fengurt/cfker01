@@ -4,9 +4,11 @@
   const TOPOLOGY_LANE_LIMIT = 14;
   const state = {
     map: null,
+    index: null,
     selected: null,
     loaded: false,
-    mode: "topology",
+    mode: "list",
+    renderQueued: false,
     topologyObserver: null,
   };
   const laneDefinitions = [
@@ -42,6 +44,7 @@
     try {
       const response = await api("/api/admin/v1/asset-map");
       state.map = response.data;
+      state.index = buildMapIndex(response.data);
       state.loaded = true;
       if ($("#asset-map-relation-editor")?.open) populateRelationSelectors();
       render();
@@ -55,41 +58,41 @@
   function render() {
     if (!state.map) return;
     const form = $("#asset-map-filters"),
-      query = String(form.elements.q.value || "")
-        .trim()
-        .toLocaleLowerCase(),
-      kind = form.elements.kind.value,
-      edgeStatus = form.elements.edgeStatus.value;
+      filters = mapFilters(form),
+      { query, kind, edgeStatus } = filters;
     const matchingEdges = state.map.edges.filter(
       (edge) => !edgeStatus || edge.status === edgeStatus,
     );
     const related = new Set(
       matchingEdges.flatMap((edge) => [edge.source, edge.target]),
     );
-    const nodes = state.map.nodes.filter(
-      (node) =>
-        (!kind || node.kind === kind) &&
-        (!edgeStatus || related.has(node.id)) &&
-        (!query || searchable(node).includes(query)),
-    );
+    const nodes = state.map.nodes
+      .filter(
+        (node) =>
+          (!kind || node.kind === kind) &&
+          (!edgeStatus || related.has(node.id)) &&
+          matchesMapFilters(node, filters),
+      )
+      .sort((a, b) => compareMapNodes(a, b, filters.sort));
     const nodeIds = new Set(nodes.map((node) => node.id));
-    if (
-      state.mode === "list" &&
-      state.selected &&
-      !nodeIds.has(state.selected)
-    )
-      state.selected = null;
+    if (state.selected && !nodeIds.has(state.selected)) state.selected = null;
     const directEdgeCount = matchingEdges.filter(
       (edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target),
     ).length;
     renderSummary(nodes, directEdgeCount);
     const display =
       state.mode === "topology"
-        ? renderTopology(nodes, matchingEdges, { query, kind })
+        ? renderTopology(nodes, matchingEdges, {
+            query,
+            kind,
+            hasFilters: hasActiveMapFilters(filters),
+          })
         : renderLanes(nodes);
     $("#asset-map-filter-result").textContent =
       state.mode === "topology"
-        ? `当前映射 ${display.nodeCount} 个节点、${display.edgeCount} 条关系；完整图 ${state.map.nodes.length} 个节点、${matchingEdges.length} 条关系`
+        ? state.selected
+          ? `聚焦 ${display.nodeCount} 个节点、${display.edgeCount} 条关系；筛选命中 ${nodes.length} / ${state.map.nodes.length}`
+          : `显示 ${display.nodeCount} / ${nodes.length} 个节点；选择节点后显示上下游关系`
         : `${nodes.length} / ${state.map.nodes.length} 节点，${directEdgeCount} 条当前关系`;
     if (
       state.selected &&
@@ -131,6 +134,15 @@
     state.topologyObserver = null;
     canvas.className = "asset-map-canvas is-list";
     canvas.replaceChildren();
+    if (!nodes.length) {
+      canvas.append(
+        element("div", "asset-map-no-results", [
+          element("strong", "", "没有匹配资产"),
+          element("span", "", "调整筛选条件或重置后再试。"),
+        ]),
+      );
+      return { nodeCount: 0, edgeCount: 0 };
+    }
     for (const [kindList, label] of laneDefinitions) {
       const kinds = new Set(kindList.split(",")),
         laneNodes = nodes.filter((node) => kinds.has(node.kind)),
@@ -139,9 +151,7 @@
         list = element("div", "asset-map-node-list");
       lane.append(heading, list);
       for (const node of laneNodes.slice(0, 120)) {
-        const relations = state.map.edges.filter(
-          (edge) => edge.source === node.id || edge.target === node.id,
-        ).length;
+        const relations = state.index.degree.get(node.id) || 0;
         const button = element("button", "asset-map-node");
         button.type = "button";
         button.dataset.nodeId = node.id;
@@ -150,6 +160,7 @@
           element("strong", "", node.label),
           element("em", "", String(relations)),
           element("small", "", nodeSubtitle(node)),
+          nodeFacts(node),
         );
         list.append(button);
       }
@@ -219,6 +230,7 @@
           element("strong", "", node.label),
           element("small", "", nodeSubtitle(node)),
           element("em", "", String(degree.get(node.id) || 0)),
+          nodeFacts(node),
         );
         nodeElements.set(node.id, button);
         list.append(button);
@@ -231,8 +243,9 @@
 
     stage.append(svg, grid);
     canvas.append(stage);
+    const visibleEdges = state.selected ? topology.edges : [];
     const draw = () =>
-      drawTopologyEdges(stage, svg, topology.edges, nodeElements);
+      drawTopologyEdges(stage, svg, visibleEdges, nodeElements);
     requestAnimationFrame(draw);
     if (typeof ResizeObserver === "function") {
       state.topologyObserver = new ResizeObserver(() =>
@@ -242,7 +255,7 @@
     }
     return {
       nodeCount: nodeElements.size,
-      edgeCount: topology.edges.filter(
+      edgeCount: visibleEdges.filter(
         (edge) =>
           nodeElements.has(edge.source) && nodeElements.has(edge.target),
       ).length,
@@ -316,7 +329,7 @@
         }
         frontier = next;
       }
-    } else if (context.query || context.kind) {
+    } else if (context.hasFilters) {
       for (const node of anchors.slice(0, 28)) add(node.id);
       expandOneHop(selectedIds, edges, degree, add);
     } else {
@@ -670,7 +683,21 @@
       button.disabled = false;
     }
   });
-  $("#asset-map-filters")?.addEventListener("input", render);
+  $("#asset-map-filters")?.addEventListener("input", scheduleRender);
+  $("#asset-map-filters")?.addEventListener("change", scheduleRender);
+  $("#asset-map-filters")?.addEventListener("reset", () => {
+    state.mode = "list";
+    state.selected = null;
+    document
+      .querySelectorAll("button[data-map-mode]")
+      .forEach((item) =>
+        item.setAttribute(
+          "aria-pressed",
+          String(item.dataset.mapMode === state.mode),
+        ),
+      );
+    requestAnimationFrame(render);
+  });
   $("#asset-map-filters")?.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-map-mode]");
     if (!button) return;
@@ -731,8 +758,326 @@
     }
   });
 
+  function scheduleRender() {
+    if (state.renderQueued) return;
+    state.renderQueued = true;
+    requestAnimationFrame(() => {
+      state.renderQueued = false;
+      render();
+    });
+  }
+
+  function buildMapIndex(map) {
+    const nodeById = new Map(map.nodes.map((node) => [node.id, node]));
+    const degree = degreeMap(map.edges);
+    const search = new Map(
+      map.nodes.map((node) => [node.id, searchable(node)]),
+    );
+    const timestamps = new Map(
+      map.nodes.map((node) => [node.id, nodeTimestamp(node)]),
+    );
+    const sync = new Map(
+      map.nodes.map((node) => [node.id, normalizedSyncStatus(node)]),
+    );
+    const roots = new Map();
+    const deployed = new Set(
+      map.nodes
+        .filter((node) => node.kind === "deployment")
+        .map((node) => node.id),
+    );
+    const skills = new Set(
+      map.nodes.filter((node) => hasSkillMetadata(node)).map((node) => node.id),
+    );
+
+    for (const node of map.nodes) {
+      const root = localRoot(node);
+      if (root) roots.set(node.id, new Set([root]));
+    }
+    for (const edge of map.edges) {
+      if (edge.relationship === "syncs_to" && !sync.get(edge.source))
+        sync.set(edge.source, sync.get(edge.target) || "");
+      if (edge.relationship === "contains_skill") {
+        skills.add(edge.source);
+        skills.add(edge.target);
+      }
+    }
+
+    const rootRelationships = new Set([
+      "syncs_to",
+      "contains_project",
+      "contains_skill",
+      "implements",
+      "deploys_as",
+      "runs_on",
+      "exposes",
+    ]);
+    for (let pass = 0; pass < 7; pass++) {
+      let changed = false;
+      for (const edge of map.edges) {
+        if (!rootRelationships.has(edge.relationship)) continue;
+        const sourceRoots = roots.get(edge.source);
+        if (!sourceRoots?.size) continue;
+        const targetRoots = roots.get(edge.target) || new Set();
+        const before = targetRoots.size;
+        for (const root of sourceRoots) targetRoots.add(root);
+        if (targetRoots.size !== before) {
+          roots.set(edge.target, targetRoots);
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+
+    const deploymentParents = new Set([
+      "deploys_as",
+      "implements",
+      "syncs_to",
+      "contains_project",
+      "belongs_to",
+    ]);
+    for (let pass = 0; pass < 6; pass++) {
+      let changed = false;
+      for (const edge of map.edges) {
+        if (
+          deploymentParents.has(edge.relationship) &&
+          deployed.has(edge.target) &&
+          !deployed.has(edge.source)
+        ) {
+          deployed.add(edge.source);
+          changed = true;
+        }
+        if (
+          ["runs_on", "exposes"].includes(edge.relationship) &&
+          deployed.has(edge.source) &&
+          !deployed.has(edge.target)
+        ) {
+          deployed.add(edge.target);
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+
+    return {
+      nodeById,
+      degree,
+      search,
+      timestamps,
+      sync,
+      roots,
+      deployed,
+      skills,
+    };
+  }
+
+  function mapFilters(form) {
+    return {
+      query: String(form.elements.q.value || "")
+        .trim()
+        .toLocaleLowerCase(),
+      kind: form.elements.kind.value,
+      syncStatus: form.elements.syncStatus.value,
+      updated: form.elements.updated.value,
+      root: form.elements.root.value,
+      deployed: form.elements.deployed.value,
+      skills: form.elements.skills.value,
+      edgeStatus: form.elements.edgeStatus.value,
+      sort: form.elements.sort.value || "updated_desc",
+    };
+  }
+
+  function matchesMapFilters(node, filters) {
+    const index = state.index;
+    if (
+      filters.query &&
+      !filters.query
+        .split(/\s+/)
+        .every((token) => index.search.get(node.id).includes(token))
+    )
+      return false;
+    if (filters.syncStatus && index.sync.get(node.id) !== filters.syncStatus)
+      return false;
+    if (
+      filters.updated &&
+      !matchesUpdatedRange(index.timestamps.get(node.id), filters.updated)
+    )
+      return false;
+    if (filters.root && !index.roots.get(node.id)?.has(filters.root))
+      return false;
+    if (
+      filters.deployed &&
+      index.deployed.has(node.id) !== (filters.deployed === "true")
+    )
+      return false;
+    if (
+      filters.skills &&
+      index.skills.has(node.id) !== (filters.skills === "true")
+    )
+      return false;
+    return true;
+  }
+
+  function hasActiveMapFilters(filters) {
+    return Boolean(
+      filters.query ||
+      filters.kind ||
+      filters.syncStatus ||
+      filters.updated ||
+      filters.root ||
+      filters.deployed ||
+      filters.skills ||
+      filters.edgeStatus,
+    );
+  }
+
+  function matchesUpdatedRange(timestamp, range) {
+    if (range === "unknown") return !timestamp;
+    if (!timestamp) return false;
+    const age = Date.now() - timestamp;
+    const day = 24 * 60 * 60 * 1000;
+    if (range === "older") return age > 90 * day;
+    const limit = {
+      "24h": day,
+      "7d": 7 * day,
+      "30d": 30 * day,
+      "90d": 90 * day,
+    }[range];
+    return limit ? age <= limit : true;
+  }
+
+  function compareMapNodes(a, b, sort) {
+    const index = state.index;
+    if (sort === "name") return a.label.localeCompare(b.label);
+    if (sort === "relations")
+      return (
+        (index.degree.get(b.id) || 0) - (index.degree.get(a.id) || 0) ||
+        a.label.localeCompare(b.label)
+      );
+    if (sort === "sync_risk") {
+      const severity = {
+        diverged: 90,
+        github_not_found_or_no_access: 85,
+        dirty_uncommitted: 80,
+        local_ahead: 70,
+        github_ahead: 65,
+        github_head_mismatch: 60,
+        no_remote: 55,
+        remote_non_github: 30,
+        unverified: 20,
+        synced: 0,
+      };
+      return (
+        (severity[index.sync.get(b.id)] || 0) -
+          (severity[index.sync.get(a.id)] || 0) ||
+        (index.timestamps.get(b.id) || 0) - (index.timestamps.get(a.id) || 0) ||
+        a.label.localeCompare(b.label)
+      );
+    }
+    const direction = sort === "updated_asc" ? 1 : -1;
+    const aTime = index.timestamps.get(a.id) || 0;
+    const bTime = index.timestamps.get(b.id) || 0;
+    if (!aTime && bTime) return 1;
+    if (aTime && !bTime) return -1;
+    return direction * (aTime - bTime) || a.label.localeCompare(b.label);
+  }
+
   function searchable(node) {
-    return `${node.label} ${node.status} ${JSON.stringify(node.metadata || {})} ${node.annotation?.notes || ""}`.toLocaleLowerCase();
+    return `${node.label} ${node.id} ${node.status} ${JSON.stringify(node.metadata || {})} ${(node.annotation?.tags || []).join(" ")} ${node.annotation?.notes || ""}`.toLocaleLowerCase();
+  }
+
+  function nodeTimestamp(node) {
+    const value =
+      node.metadata?.sourceUpdatedAt ||
+      node.metadata?.lastCommitAt ||
+      node.metadata?.pushedAt ||
+      node.updatedAt;
+    const timestamp = Date.parse(String(value || ""));
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+
+  function normalizedSyncStatus(node) {
+    const raw = String(node.metadata?.syncStatus || node.status || "");
+    if (raw === "dirty") return "dirty_uncommitted";
+    if (raw === "tracked" && node.metadata?.dirty) return "dirty_uncommitted";
+    return [
+      "synced",
+      "dirty_uncommitted",
+      "local_ahead",
+      "github_ahead",
+      "github_head_mismatch",
+      "diverged",
+      "no_remote",
+      "github_not_found_or_no_access",
+      "remote_non_github",
+      "unverified",
+    ].includes(raw)
+      ? raw
+      : "";
+  }
+
+  function localRoot(node) {
+    const path = String(node.metadata?.scanRoot || node.metadata?.path || "");
+    if (path === "/Users/af/cpro01" || path.startsWith("/Users/af/cpro01/"))
+      return "/Users/af/cpro01";
+    if (
+      path === "/Users/af/Documents" ||
+      path.startsWith("/Users/af/Documents/")
+    )
+      return "/Users/af/Documents";
+    return "";
+  }
+
+  function hasSkillMetadata(node) {
+    return (
+      node.metadata?.resourceType === "skill" ||
+      (Array.isArray(node.metadata?.resourceTypes) &&
+        node.metadata.resourceTypes.includes("skill")) ||
+      (Array.isArray(node.metadata?.skillPaths) &&
+        node.metadata.skillPaths.length > 0)
+    );
+  }
+
+  function nodeFacts(node) {
+    const facts = element("span", "asset-map-node-facts");
+    const syncStatus = state.index?.sync.get(node.id);
+    if (syncStatus)
+      facts.append(
+        element("span", `is-sync is-${syncStatus}`, syncLabel(syncStatus)),
+      );
+    const timestamp = state.index?.timestamps.get(node.id);
+    facts.append(
+      element(
+        "time",
+        "",
+        timestamp ? compactDate(timestamp) : "更新时间未采集",
+      ),
+    );
+    return facts;
+  }
+
+  function syncLabel(status) {
+    return (
+      {
+        synced: "已同步",
+        dirty_uncommitted: "未提交",
+        local_ahead: "本地领先",
+        github_ahead: "GitHub 领先",
+        github_head_mismatch: "HEAD 不一致",
+        diverged: "已分叉",
+        no_remote: "无 Remote",
+        github_not_found_or_no_access: "GitHub 不可达",
+        remote_non_github: "非 GitHub",
+        unverified: "未验证",
+      }[status] || status
+    );
+  }
+
+  function compactDate(timestamp) {
+    return new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(timestamp));
   }
   function nodeSubtitle(node) {
     if (node.kind === "local_path") return node.metadata.path || node.status;

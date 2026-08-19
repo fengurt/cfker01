@@ -22,7 +22,7 @@ describe("admin fleet UI release contract", () => {
 
   it("cache-busts every admin asset with one shell release key", () => {
     expect(workspace).toContain(
-      'const adminAssetVersion = "20260819-asset-map-snapshot-1"',
+      'const adminAssetVersion = "20260819-asset-map-filters-1"',
     );
     for (const asset of [
       "admin.css",
@@ -113,7 +113,9 @@ describe("admin fleet UI release contract", () => {
     expect(adminMapScript).toContain("/api/admin/v1/asset-map/edges");
     expect(adminMapScript).toContain("/api/admin/v1/asset-map/versions");
     expect(adminMapScript).toContain("const button = event.currentTarget");
-    expect(adminMapScript).not.toContain("event.currentTarget.disabled = false");
+    expect(adminMapScript).not.toContain(
+      "event.currentTarget.disabled = false",
+    );
   });
 
   it("renders real asset relationships as a bounded interactive topology", () => {
@@ -131,7 +133,7 @@ describe("admin fleet UI release contract", () => {
 
   it("keeps topology focus and inspector accessibility consistent with filters", () => {
     expect(adminMapScript).toContain(
-      'state.mode === "list"',
+      "if (state.selected && !nodeIds.has(state.selected))",
     );
     expect(adminMapScript).toContain("!nodeIds.has(state.selected)");
     expect(adminMapScript).toContain(
@@ -141,5 +143,22 @@ describe("admin fleet UI release contract", () => {
       "if (selectedIds.has(edge.source) || add(edge.source))",
     );
     expect(adminMapScript).toContain('id: "asset-map-inspector-title"');
+  });
+
+  it("filters the asset map live by repository freshness and operating state", () => {
+    expect(workspace).toContain("全局搜索");
+    expect(workspace).toContain('name="syncStatus"');
+    expect(workspace).toContain('name="updated"');
+    expect(workspace).toContain('name="root"');
+    expect(workspace).toContain('name="deployed"');
+    expect(workspace).toContain('name="skills"');
+    expect(workspace).toContain('name="sort"');
+    expect(workspace).toContain('id="asset-map-reset"');
+    expect(workspace).toContain('data-map-mode="list" aria-pressed="true"');
+    expect(adminMapScript).toContain('mode: "list"');
+    expect(adminMapScript).toContain("function buildMapIndex");
+    expect(adminMapScript).toContain("function matchesUpdatedRange");
+    expect(adminMapScript).toContain("function compareMapNodes");
+    expect(adminMapScript).toContain("requestAnimationFrame(render)");
   });
 });
